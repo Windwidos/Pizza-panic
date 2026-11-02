@@ -7,6 +7,9 @@ const crypto = require('crypto');
 const SB_URL = process.env.SUPABASE_URL;
 const SB_KEY = process.env.SUPABASE_SERVICE_KEY;
 const LOCAL_FILE = path.join(__dirname, 'data', 'profiles.json');
+// Pizza Panic shares the Supabase project with Smash Burger (free plan: 2 projects), so its tables carry a prefix.
+const T_PROFILES = process.env.SUPABASE_PROFILES_TABLE || 'pizza_profiles';
+const T_PURCHASES = process.env.SUPABASE_PURCHASES_TABLE || 'pizza_purchases';
 
 const hash = t => crypto.createHash('sha256').update(String(t)).digest('hex');
 const cache = new Map();
@@ -62,7 +65,7 @@ function saveLocal() {
 async function create(name) {
   const token = crypto.randomBytes(24).toString('hex');
   const p = clean({ id: crypto.randomUUID(), name, xp: 0, games: 0, wins: 0, tutorial_done: false, token_hash: hash(token) });
-  if (SB_URL) await sb('POST', 'profiles', '', toRow(p));
+  if (SB_URL) await sb('POST', T_PROFILES, '', toRow(p));
   else { loadLocal()[p.id] = toRow(p); saveLocal(); }
   cache.set(p.id, p);
   return { profile: p, token };
@@ -72,7 +75,7 @@ async function get(id) {
   if (!id || typeof id !== 'string' || id.length > 64) return null;
   if (cache.has(id)) return cache.get(id);
   let row;
-  if (SB_URL) row = (await sb('GET', 'profiles', `?id=eq.${encodeURIComponent(id)}&select=*`))[0];
+  if (SB_URL) row = (await sb('GET', T_PROFILES,`?id=eq.${encodeURIComponent(id)}&select=*`))[0];
   else row = loadLocal()[id];
   if (!row) return null;
   const p = clean(row);
@@ -91,13 +94,13 @@ async function save(p) {
   const row = toRow(p);
   delete row.id;
   delete row.token_hash;
-  if (SB_URL) await sb('PATCH', 'profiles', `?id=eq.${encodeURIComponent(p.id)}`, { ...row, updated_at: new Date().toISOString() });
+  if (SB_URL) await sb('PATCH', T_PROFILES,`?id=eq.${encodeURIComponent(p.id)}`, { ...row, updated_at: new Date().toISOString() });
   else { loadLocal()[p.id] = { ...loadLocal()[p.id], ...row }; saveLocal(); }
 }
 
 async function remove(p) {
   cache.delete(p.id);
-  if (SB_URL) await sb('DELETE', 'profiles', `?id=eq.${encodeURIComponent(p.id)}`);
+  if (SB_URL) await sb('DELETE', T_PROFILES,`?id=eq.${encodeURIComponent(p.id)}`);
   else { delete loadLocal()[p.id]; saveLocal(); }
 }
 
@@ -105,7 +108,7 @@ async function remove(p) {
 async function claimPurchase(token, profileId, product) {
   if (SB_URL) {
     try {
-      await sb('POST', 'purchases', '', { token, profile_id: profileId, product }, 'return=minimal');
+      await sb('POST', T_PURCHASES,'', { token, profile_id: profileId, product }, 'return=minimal');
       return true;
     } catch (e) {
       if (e.status === 409) return false;
