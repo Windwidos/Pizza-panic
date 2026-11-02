@@ -34,6 +34,7 @@ In dieser Pizzeria zählt nur eins: Stell als Erste:r alle Pizzen deiner Bestell
 • 5 Themen-Packs: Aloha Hawaii, Feuer & Flamme, Grüner Garten, Frutti di Mare und Weihnachtsbäckerei – mit neuen Zutaten und Spezial-Pizzen
 • Shop mit Pizzabrett-Designs und Emotes – alles auch einfach durchs Spielen freischaltbar
 • Kein Konto, keine Anmeldung, keine Zwangswerbung – Videos nur, wenn du willst
+• Verfügbar auf Deutsch, Englisch, Französisch, Spanisch und Italienisch
 
 Buon appetito – ab in die Pizzeria!
 

@@ -218,9 +218,10 @@
   function levelInfo(xp) {
     let level = 1, rest = xp || 0;
     while (rest >= xpToNext(level)) { rest -= xpToNext(level); level++; }
-    let title = TITLES[0][1];
-    for (const [l, t] of TITLES) if (level >= l) title = t;
-    return { level, into: rest, need: xpToNext(level), title };
+    let ti = 0;
+    TITLES.forEach(([l], i) => { if (level >= l) ti = i; });
+    // titleKey (title.0 … title.6) is what the client shows; title stays German for logs and tests.
+    return { level, into: rest, need: xpToNext(level), title: TITLES[ti][1], titleKey: 'title.' + ti };
   }
 
   // XP for one finished game: everybody gets something, finished pizzas and the win count extra.
@@ -256,13 +257,17 @@
       noDig: opts.noDig || [],
     };
     for (let k = 0; k < HAND_SIZE; k++) s.players.forEach((p, i) => p.hand.push(drawFor(s, i)));
-    log(s, `${s.players[s.current].name} beginnt. Buon appetito!`);
+    log(s, 'log.start', { who: s.players[s.current].name });
     return s;
   }
 
+  // Log entries are language-neutral: a text key (k) plus data (p); every client renders them in its own language
+  // (public/lang). Card types and recipe indices stay ids, labels are objects (see stackLabel).
   // fx describes attacks precisely (who, from where, to where) so clients can animate them.
-  function log(s, text, fx) {
-    s.log.push(fx ? { n: ++s.logSeq, text, fx } : { n: ++s.logSeq, text });
+  function log(s, k, p, fx) {
+    const e = { n: ++s.logSeq, k, p: p || {} };
+    if (fx) e.fx = fx;
+    s.log.push(e);
     if (s.log.length > 80) s.log.shift();
   }
 
@@ -272,7 +277,7 @@
       // Flip the trash pile without shuffling: the oldest discard ends up on top.
       s.deck = s.trash.reverse();
       s.trash = [];
-      log(s, 'Nachziehstapel leer – der Müll wird umgedreht und ist wie neu!');
+      log(s, 'log.reshuffle');
     }
     return s.deck.pop();
   }
@@ -306,7 +311,7 @@
       const i = (s.current + k) % n;
       if (trayDone(s.players[i].tray, s.recipes)) {
         s.winner = i;
-        log(s, `🍕 ${s.players[i].name} hat alle Pizzen fertig und gewinnt!`);
+        log(s, 'log.win', { who: s.players[i].name });
         return true;
       }
     }
@@ -324,10 +329,11 @@
     return s.trash.filter(c => TYPES[c.t].kind === 'ing' && placeTargets(tray, [c], s.recipes).length);
   }
 
+  // What a stack is, for the log: a finished recipe, a single card or a half pizza with n cards.
   function stackLabel(stack, recipes) {
     const r = completeRecipe(stack, recipes);
-    if (r >= 0) return `die fertige Pizza ${RECIPES[r].name}`;
-    return stack.length === 1 ? `${TYPES[stack[0].t].name}` : `eine halbe Pizza (${stack.length} Karten)`;
+    if (r >= 0) return { r };
+    return stack.length === 1 ? { t: stack[0].t } : { n: stack.length };
   }
 
   function normTarget(t, tray) {
@@ -337,116 +343,116 @@
   }
 
   const ok = () => ({ ok: true });
-  const fail = error => ({ ok: false, error });
+  // error is a text key (err.*), params fill its placeholders – the client translates it.
+  const fail = (error, params) => ({ ok: false, error, params });
 
   function act(s, p, a, rng) {
     rng = rng || Math.random;
-    if (!a || typeof a !== 'object') return fail('Ungültige Aktion.');
-    if (s.winner != null) return fail('Das Spiel ist vorbei.');
-    if (p !== s.current) return fail('Du bist nicht am Zug.');
+    if (!a || typeof a !== 'object') return fail('err.badAction');
+    if (s.winner != null) return fail('err.gameOver');
+    if (p !== s.current) return fail('err.notYourTurn');
     const me = s.players[p];
     const R = s.recipes;
 
     if (s.pending) {
-      if (s.pending.type !== 'dig' || a.type !== 'digPick') return fail('Verwende zuerst die Karte aus dem Müll.');
+      if (s.pending.type !== 'dig' || a.type !== 'digPick') return fail('err.digFirst');
       const ti = s.trash.findIndex(c => c.id === a.cardId);
-      if (ti < 0 || TYPES[s.trash[ti].t].kind !== 'ing') return fail('Diese Zutat liegt nicht im Müll.');
+      if (ti < 0 || TYPES[s.trash[ti].t].kind !== 'ing') return fail('err.notInTrash');
       const card = s.trash[ti];
       const tg = normTarget(a.stack, me.tray);
-      if (tg == null || !placeTargets(me.tray, [card], R).includes(tg)) return fail('Da passt die Zutat nicht hin.');
+      if (tg == null || !placeTargets(me.tray, [card], R).includes(tg)) return fail('err.noFit');
       s.trash.splice(ti, 1);
       me.tray = withAdded(me.tray, [card], tg);
       s.pending = null;
-      log(s, `🗑️ ${me.name} fischt ${TYPES[card.t].name} aus dem Müll und legt es aufs Brett.`,
+      log(s, 'log.digPick', { who: me.name, card: card.t },
         { k: 'dig', by: p, cards: [card.t], to: { player: p, stack: tg === 'new' ? me.tray.length - 1 : tg } });
       afterPlay(s);
       return ok();
     }
 
     if (a.type === 'end') {
-      if (s.played === 0 && me.hand.length) return fail('Aussetzen gilt nicht – spiel mindestens 1 Karte.');
+      if (s.played === 0 && me.hand.length) return fail('err.mustPlay');
       endTurn(s);
       return ok();
     }
 
     if (a.type === 'pair') {
-      if (s.played + 2 > MAX_PLAYS) return fail('Für ein Paar brauchst du noch 2 freie Spielzüge.');
+      if (s.played + 2 > MAX_PLAYS) return fail('err.pairPlays');
       const ids = Array.isArray(a.cardIds) ? a.cardIds : [];
       const cards = ids.map(id => me.hand.find(c => c.id === id));
       if (cards.length !== 2 || !cards[0] || !cards[1] || ids[0] === ids[1] || cards[0].t !== cards[1].t) {
-        return fail('Dafür brauchst du zwei identische Karten.');
+        return fail('err.pairSame');
       }
       const victim = s.players[a.target];
-      if (!victim || a.target === p) return fail('Wähle eine andere Person.');
-      if (!victim.hand.length) return fail(`${victim.name} hat keine Karten.`);
+      if (!victim || a.target === p) return fail('err.otherPerson');
+      if (!victim.hand.length) return fail('err.noCards', { name: victim.name });
       me.hand = me.hand.filter(c => !ids.includes(c.id));
       s.trash.push(...cards);
       const stolen = victim.hand.splice(Math.floor(rng() * victim.hand.length), 1)[0];
       me.hand.push(stolen);
       s.played += 2;
-      log(s, `🃏 ${me.name} wirft zwei Mal ${TYPES[cards[0].t].name} ab und zieht blind eine Karte von ${victim.name}.`,
+      log(s, 'log.pair', { who: me.name, card: cards[0].t, victim: victim.name },
         { k: 'pair', by: p, victim: a.target, cards: [cards[0].t] });
       afterPlay(s);
       return ok();
     }
 
-    if (s.played >= MAX_PLAYS) return fail('Du hast schon 3 Karten gespielt.');
+    if (s.played >= MAX_PLAYS) return fail('err.maxPlays');
     const hi = me.hand.findIndex(c => c.id === a.cardId);
-    if (hi < 0) return fail('Die Karte ist nicht auf deiner Hand.');
+    if (hi < 0) return fail('err.notInHand');
     const card = me.hand[hi];
     const def = TYPES[card.t];
 
     switch (a.type) {
       case 'place': {
-        if (def.kind !== 'ing') return fail('Das ist keine Zutat.');
+        if (def.kind !== 'ing') return fail('err.notIngredient');
         const tg = normTarget(a.stack, me.tray);
-        if (tg == null || !placeTargets(me.tray, [card], R).includes(tg)) return fail('Da passt die Zutat nicht hin.');
+        if (tg == null || !placeTargets(me.tray, [card], R).includes(tg)) return fail('err.noFit');
         me.hand.splice(hi, 1);
         me.tray = withAdded(me.tray, [card], tg);
         const st = me.tray[tg === 'new' ? me.tray.length - 1 : tg];
         const done = completeRecipe(st, R);
-        log(s, done >= 0
-          ? `✅ ${me.name} stellt eine Pizza ${RECIPES[done].name} fertig!`
-          : `${me.name} legt ${def.name}${tg === 'new' ? ' als neue Pizza' : ''}.`);
+        if (done >= 0) log(s, 'log.done', { who: me.name, recipe: done });
+        else log(s, tg === 'new' ? 'log.placeNew' : 'log.place', { who: me.name, card: card.t });
         break;
       }
       case 'discard': {
         me.hand.splice(hi, 1);
         s.trash.push(card);
-        log(s, `${me.name} wirft ${def.name} in den Müll.`);
+        log(s, 'log.discard', { who: me.name, card: card.t });
         break;
       }
       case 'burn': {
-        if (card.t !== 'burn') return fail('Falsche Karte.');
+        if (card.t !== 'burn') return fail('err.wrongCard');
         const tp = s.players[a.target && a.target.player];
         const si = tp ? normTarget(a.target.stack, tp.tray) : null;
-        if (si == null || si === 'new') return fail('Diese Pizza gibt es nicht.');
+        if (si == null || si === 'new') return fail('err.noPizza');
         const st = tp.tray[si];
         const label = stackLabel(st, R);
         me.hand.splice(hi, 1);
         tp.tray.splice(si, 1);
         s.trash.push(...st, card);
-        log(s, `🔥 ${me.name} lässt ${label} ${tp === me ? 'auf dem eigenen Brett' : `von ${tp.name}`} anbrennen.`,
+        log(s, tp === me ? 'log.burnOwn' : 'log.burn', { who: me.name, label, victim: tp.name },
           { k: 'burn', by: p, from: { player: a.target.player, stack: si }, cards: st.map(c => c.t), label });
         break;
       }
       case 'steal': {
-        if (card.t !== 'steal') return fail('Falsche Karte.');
+        if (card.t !== 'steal') return fail('err.wrongCard');
         const f = a.from || {}, t = a.to || {};
         const src = s.players[f.player];
         const si = src ? normTarget(f.stack, src.tray) : null;
-        if (si == null || si === 'new') return fail('Diese Pizza gibt es nicht.');
+        if (si == null || si === 'new') return fail('err.noPizza');
         const dst = s.players[t.player];
-        if (!dst || t.player === f.player) return fail('Die Beute muss auf ein anderes Brett.');
+        if (!dst || t.player === f.player) return fail('err.otherBoard');
         const st = src.tray[si];
         const whole = a.mode === 'whole';
-        if (whole && completeRecipe(st, R) < 0) return fail('Ganz klauen geht nur bei fertigen Pizzen.');
+        if (whole && completeRecipe(st, R) < 0) return fail('err.wholeOnlyDone');
         const moving = whole ? st.slice() : [st[st.length - 1]];
         const tg = whole ? 'new' : normTarget(t.stack, dst.tray);
-        if (tg == null) return fail('Ungültiges Ziel.');
+        if (tg == null) return fail('err.badTarget');
         const newDst = withAdded(dst.tray, moving, tg);
-        if (!trayValid(newDst, R)) return fail('Das passt auf dem Ziel-Brett nicht.');
-        const label = whole ? stackLabel(st, R) : TYPES[moving[0].t].name;
+        if (!trayValid(newDst, R)) return fail('err.noFitTarget');
+        const label = whole ? stackLabel(st, R) : { t: moving[0].t };
         me.hand.splice(hi, 1);
         if (whole) src.tray.splice(si, 1);
         else {
@@ -455,8 +461,8 @@
         }
         dst.tray = newDst;
         s.trash.push(card);
-        const where = dst === me ? 'aufs eigene Brett' : `aufs Brett von ${dst.name}`;
-        log(s, `✋ ${me.name} klaut ${label} ${src === me ? 'vom eigenen Brett' : `von ${src.name}`} und legt es ${where}.`, {
+        // from/to: null = the thief's own board, otherwise the owner's name.
+        log(s, 'log.steal', { who: me.name, label, from: src === me ? null : src.name, to: dst === me ? null : dst.name }, {
           k: 'steal', by: p, whole, label, cards: moving.map(c => c.t),
           from: { player: f.player, stack: si },
           to: { player: t.player, stack: tg === 'new' ? dst.tray.length - 1 : tg },
@@ -464,20 +470,20 @@
         break;
       }
       case 'dig': {
-        if (card.t !== 'dig') return fail('Falsche Karte.');
+        if (card.t !== 'dig') return fail('err.wrongCard');
         me.hand.splice(hi, 1);
         s.trash.push(card);
         if (digOptions(s, p).length) {
           s.pending = { type: 'dig' };
-          log(s, `🗑️ ${me.name} durchwühlt den Müll …`);
+          log(s, 'log.digging', { who: me.name });
         } else {
-          log(s, `🗑️ ${me.name} durchwühlt den Müll, findet aber nichts Brauchbares.`);
+          log(s, 'log.digNothing', { who: me.name });
         }
         break;
       }
       case 'swap': {
-        if (card.t !== 'swap') return fail('Falsche Karte.');
-        if (a.dir !== 'next' && a.dir !== 'prev') return fail('Wähle eine Richtung.');
+        if (card.t !== 'swap') return fail('err.wrongCard');
+        if (a.dir !== 'next' && a.dir !== 'prev') return fail('err.pickDirection');
         const n = s.players.length;
         const trays = s.players.map(pl => pl.tray);
         s.players.forEach((pl, i) => {
@@ -485,12 +491,12 @@
         });
         me.hand.splice(hi, 1);
         s.trash.push(card);
-        log(s, `🔄 Ups, falscher Tisch! ${me.name} lässt alle Pizzabretter ${a.dir === 'next' ? 'an die nächste' : 'an die vorherige'} Person wandern.`,
+        log(s, a.dir === 'next' ? 'log.swapNext' : 'log.swapPrev', { who: me.name },
           { k: 'swap', by: p, dir: a.dir });
         break;
       }
       default:
-        return fail('Unbekannte Aktion.');
+        return fail('err.unknownAction');
     }
     s.played++;
     afterPlay(s);

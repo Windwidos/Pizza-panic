@@ -343,8 +343,8 @@ function handleLobbyAction(room, idx, a) {
       const me = room.players[idx];
       const emote = Shop.EMOTES.find(e => e.id === a.id);
       const allowed = emote && (me.profile ? Shop.ownsPack(me.profile, emote.pack) : emote.pack === 'free');
-      if (!allowed) return 'Dieses Emote hast du noch nicht.';
-      if (Date.now() - (me.lastEmote || 0) < EMOTE_COOLDOWN_MS) return 'Nicht so schnell!';
+      if (!allowed) return 'err.emoteLocked';
+      if (Date.now() - (me.lastEmote || 0) < EMOTE_COOLDOWN_MS) return 'err.tooFast';
       me.lastEmote = Date.now();
       room.emoteSeq = (room.emoteSeq || 0) + 1;
       room.emotes = (room.emotes || []).filter(e => Date.now() - e.t < EMOTE_SHOW_MS).concat({ id: room.emoteSeq, p: idx, e: emote.id, t: Date.now() });
@@ -354,48 +354,48 @@ function handleLobbyAction(room, idx, a) {
     case 'double': {
       const prof = room.players[idx].profile;
       const r = room.results && room.results[idx];
-      if (!prof || !r) return 'Hier gibt es nichts zu verdoppeln.';
-      if (r.doubled) return 'Schon verdoppelt.';
-      if (!prof.supporter && !useAd(prof, 'double')) return `Du hast heute schon ${Shop.DOUBLES_PER_DAY}× verdoppelt – morgen geht es weiter.`;
+      if (!prof || !r) return 'err.nothingToDouble';
+      if (r.doubled) return 'err.alreadyDoubled';
+      if (!prof.supporter && !useAd(prof, 'double')) return 'err.doublesUsed';
       doubleResult(room, idx);
       Profiles.save(prof).catch(e => console.error('Profil speichern:', e.message));
       return null;
     }
     case 'addBot': {
-      if (!isHost) return 'Nur der Gastgeber kann Bots hinzufügen.';
-      if (room.state) return 'Das Spiel läuft schon.';
-      if (room.players.length >= MAX_PLAYERS) return 'Der Tisch ist voll (max. 6).';
+      if (!isHost) return 'err.hostBots';
+      if (room.state) return 'err.running';
+      if (room.players.length >= MAX_PLAYERS) return 'err.tableFull';
       room.players.push(newBot(room, room.players[idx].level));
       return null;
     }
     case 'kick': {
-      if (!isHost) return 'Nur der Gastgeber kann Leute entfernen.';
-      if (room.state) return 'Während des Spiels geht das nicht.';
+      if (!isHost) return 'err.hostKick';
+      if (room.state) return 'err.notDuringGame';
       const t = room.players[a.target];
-      if (!t || t.pid === room.hostPid) return 'Ungültig.';
+      if (!t || t.pid === room.hostPid) return 'err.invalid';
       for (const res of t.clients) { res.write('event: gone\ndata: {}\n\n'); res.end(); }
       room.players.splice(a.target, 1);
       return null;
     }
     case 'start': {
-      if (!isHost) return 'Nur der Gastgeber kann starten.';
-      if (room.state) return 'Das Spiel läuft schon.';
-      if (room.players.length < 2) return 'Ihr braucht mindestens 2 Leute (oder einen Bot).';
+      if (!isHost) return 'err.hostStart';
+      if (room.state) return 'err.running';
+      if (room.players.length < 2) return 'err.needTwo';
       startGame(room, { theme: room.theme });
       return null;
     }
     case 'setTheme': {
       // Only the host picks, and only a theme pack they bought. Everyone at the table plays it.
-      if (!isHost) return 'Nur der Gastgeber wählt das Thema.';
-      if (room.state) return 'Das Spiel läuft schon.';
-      if (a.theme && !(E.THEMES[a.theme] && Shop.ownsTheme(room.players[idx].profile, a.theme))) return 'Dieses Themen-Pack hast du noch nicht.';
+      if (!isHost) return 'err.hostTheme';
+      if (room.state) return 'err.running';
+      if (a.theme && !(E.THEMES[a.theme] && Shop.ownsTheme(room.players[idx].profile, a.theme))) return 'err.themeLocked';
       room.theme = a.theme || null;
       return null;
     }
     case 'restart': {
-      if (room.kind !== 'private') return 'Starte ein neues Spiel über das Hauptmenü.';
-      if (!isHost) return 'Nur der Gastgeber kann neu starten.';
-      if (room.state && room.state.winner == null) return 'Das Spiel läuft noch.';
+      if (room.kind !== 'private') return 'err.restartMenu';
+      if (!isHost) return 'err.hostRestart';
+      if (room.state && room.state.winner == null) return 'err.stillRunning';
       room.state = null;
       room.results = null;
       room.players = room.players.filter(p => p.isBot || p.clients.size || p.pid === room.hostPid);
@@ -450,28 +450,28 @@ async function handleApi(req, res, url) {
     return;
   }
 
-  if (req.method !== 'POST') return json(res, 405, { error: 'Methode nicht erlaubt' });
+  if (req.method !== 'POST') return json(res, 405, { error: 'err.method' });
   let body;
-  try { body = await readBody(req); } catch { return json(res, 400, { error: 'Ungültige Anfrage' }); }
+  try { body = await readBody(req); } catch { return json(res, 400, { error: 'err.badRequest' }); }
 
   // --- Profil ---
   if (url.pathname === '/api/profile/create') {
     const name = cleanName(body.name);
-    if (!name) return json(res, 400, { error: 'Bitte gib deinen Namen ein.' });
+    if (!name) return json(res, 400, { error: 'err.nameMissing' });
     const { profile, token } = await Profiles.create(name);
     return json(res, 200, { profile: Profiles.publicView(profile), token });
   }
   if (url.pathname === '/api/profile/get') {
     const prof = await profileFrom(body);
-    if (!prof) return json(res, 404, { error: 'Profil nicht gefunden.', missing: true });
+    if (!prof) return json(res, 404, { error: 'err.profileMissing', missing: true });
     return json(res, 200, { profile: Profiles.publicView(prof) });
   }
   if (url.pathname === '/api/profile/update') {
     const prof = await profileFrom(body);
-    if (!prof) return json(res, 404, { error: 'Profil nicht gefunden.', missing: true });
+    if (!prof) return json(res, 404, { error: 'err.profileMissing', missing: true });
     if (body.name != null) {
       const name = cleanName(body.name);
-      if (!name) return json(res, 400, { error: 'Bitte gib deinen Namen ein.' });
+      if (!name) return json(res, 400, { error: 'err.nameMissing' });
       prof.name = name;
     }
     if (body.tutorialDone === true) prof.tutorialDone = true;
@@ -481,17 +481,17 @@ async function handleApi(req, res, url) {
   // --- Shop ---
   if (url.pathname.startsWith('/api/shop/') || url.pathname === '/api/iap/grant' || url.pathname === '/api/ads/coins') {
     const prof = await profileFrom(body);
-    if (!prof) return json(res, 404, { error: 'Profil nicht gefunden.', missing: true });
+    if (!prof) return json(res, 404, { error: 'err.profileMissing', missing: true });
     const reply = () => json(res, 200, { profile: Profiles.publicView(prof) });
 
     if (url.pathname === '/api/shop/buy') {
       const [kind, id] = String(body.item || '').split(':');
       const item = kind === 'tray' ? Shop.trayById(id) : kind === 'pack' ? Shop.packById(id) : null;
-      if (!item || item.supporter || item.price <= 0) return json(res, 400, { error: 'Das gibt es nicht zu kaufen.' });
+      if (!item || item.supporter || item.price <= 0) return json(res, 400, { error: 'err.notForSale' });
       const key = body.item;
-      if (prof.owned.includes(key)) return json(res, 400, { error: 'Das hast du schon.' });
-      if (item.level && E.levelInfo(prof.xp).level < item.level) return json(res, 400, { error: `Dieses Pizzabrett gibt es erst ab Level ${item.level}.` });
-      if (prof.coins < item.price) return json(res, 400, { error: 'Dafür reichen deine Münzen noch nicht.' });
+      if (prof.owned.includes(key)) return json(res, 400, { error: 'err.alreadyOwned' });
+      if (item.level && E.levelInfo(prof.xp).level < item.level) return json(res, 400, { error: 'err.trayLevel', params: { level: item.level } });
+      if (prof.coins < item.price) return json(res, 400, { error: 'err.notEnoughCoins' });
       prof.coins -= item.price;
       prof.owned = prof.owned.concat(key);
       if (kind === 'tray') prof.equipped = { ...prof.equipped, tray: id };
@@ -499,13 +499,13 @@ async function handleApi(req, res, url) {
       return reply();
     }
     if (url.pathname === '/api/shop/equip') {
-      if (!Shop.ownsTray(prof, body.tray, E.levelInfo(prof.xp).level)) return json(res, 400, { error: 'Dieses Pizzabrett hast du noch nicht.' });
+      if (!Shop.ownsTray(prof, body.tray, E.levelInfo(prof.xp).level)) return json(res, 400, { error: 'err.trayLocked' });
       prof.equipped = { ...prof.equipped, tray: body.tray };
       await Profiles.save(prof);
       return reply();
     }
     if (url.pathname === '/api/ads/coins') {
-      if (!useAd(prof, 'coins')) return json(res, 400, { error: 'Für heute sind alle Gratis-Videos aufgebraucht – morgen geht es weiter.' });
+      if (!useAd(prof, 'coins')) return json(res, 400, { error: 'err.adsUsed' });
       prof.coins += Shop.AD_COINS;
       await Profiles.save(prof);
       return reply();
@@ -514,7 +514,7 @@ async function handleApi(req, res, url) {
       // Google Play purchase from the Android app. Each purchase token is redeemed only once.
       const product = Shop.iapById(body.product);
       const token = String(body.purchaseToken || '');
-      if (!product || token.length < 10 || token.length > 4000) return json(res, 400, { error: 'Ungültiger Kauf.' });
+      if (!product || token.length < 10 || token.length > 4000) return json(res, 400, { error: 'err.badPurchase' });
       const fresh = await Profiles.claimPurchase(token, prof.id, product.id);
       const theme = product.theme && Shop.themeItem(product.theme);
       if (fresh) {
@@ -530,12 +530,12 @@ async function handleApi(req, res, url) {
       }
       return json(res, 200, { profile: Profiles.publicView(prof), granted: fresh });
     }
-    return json(res, 404, { error: 'Nicht gefunden' });
+    return json(res, 404, { error: 'err.notFound' });
   }
 
   if (url.pathname === '/api/profile/delete') {
     const prof = await profileFrom(body);
-    if (!prof) return json(res, 404, { error: 'Profil nicht gefunden.', missing: true });
+    if (!prof) return json(res, 404, { error: 'err.profileMissing', missing: true });
     queue.delete(prof.id);
     // Tables keep running; the player just no longer earns XP there.
     for (const room of rooms.values()) for (const p of room.players) if (p.profile && p.profile.id === prof.id) p.profile = null;
@@ -547,18 +547,18 @@ async function handleApi(req, res, url) {
   const prof = await profileFrom(body);
 
   if (url.pathname === '/api/create') {
-    if (!prof) return json(res, 401, { error: 'Bitte melde dich neu an.', missing: true });
+    if (!prof) return json(res, 401, { error: 'err.relogin', missing: true });
     const p = newPlayer(prof.name, false, prof);
     const room = newRoom('private', [p]);
     return json(res, 200, { code: room.code, pid: p.pid, token: p.token });
   }
 
   if (url.pathname === '/api/join') {
-    if (!prof) return json(res, 401, { error: 'Bitte melde dich neu an.', missing: true });
+    if (!prof) return json(res, 401, { error: 'err.relogin', missing: true });
     const room = rooms.get(String(body.code || '').toUpperCase().trim());
-    if (!room || room.kind !== 'private') return json(res, 404, { error: 'Diesen Tisch gibt es nicht.' });
-    if (room.state) return json(res, 409, { error: 'An diesem Tisch läuft schon ein Spiel.' });
-    if (room.players.length >= MAX_PLAYERS) return json(res, 409, { error: 'Der Tisch ist voll (max. 6).' });
+    if (!room || room.kind !== 'private') return json(res, 404, { error: 'err.noTable' });
+    if (room.state) return json(res, 409, { error: 'err.tableRunning' });
+    if (room.players.length >= MAX_PLAYERS) return json(res, 409, { error: 'err.tableFull' });
     const mine = room.players.find(p => p.profile && p.profile.id === prof.id);
     if (mine) return json(res, 200, { code: room.code, pid: mine.pid, token: mine.token });
     let name = prof.name;
@@ -571,7 +571,7 @@ async function handleApi(req, res, url) {
 
   // Store screenshots only (SMASH_DEMO=1 on a local machine, never on Render): a game in a prepared position.
   if (url.pathname === '/api/demo' && process.env.SMASH_DEMO === '1') {
-    if (!prof) return json(res, 401, { error: 'Bitte melde dich neu an.', missing: true });
+    if (!prof) return json(res, 401, { error: 'err.relogin', missing: true });
     const scene = DEMO_SCENES[body.scene] || DEMO_SCENES.classic;
     const p = newPlayer(prof.name, false, prof);
     const room = newRoom('bots', [p]);
@@ -599,7 +599,7 @@ async function handleApi(req, res, url) {
 
   // Quick game against bots: starts right away, difficulty and number of opponents chosen by the player.
   if (url.pathname === '/api/bots') {
-    if (!prof) return json(res, 401, { error: 'Bitte melde dich neu an.', missing: true });
+    if (!prof) return json(res, 401, { error: 'err.relogin', missing: true });
     const skill = BOT_REWARD[body.skill] ? body.skill : 'normal';
     const count = Math.min(3, Math.max(1, Number(body.opponents) || 2));
     const theme = body.theme && E.THEMES[body.theme] && Shop.ownsTheme(prof, body.theme) ? body.theme : null;
@@ -617,7 +617,7 @@ async function handleApi(req, res, url) {
   }
 
   if (url.pathname === '/api/tutorial') {
-    if (!prof) return json(res, 401, { error: 'Bitte melde dich neu an.', missing: true });
+    if (!prof) return json(res, 401, { error: 'err.relogin', missing: true });
     const p = newPlayer(prof.name, false, prof);
     const room = newRoom('tutorial', [p, newPlayer(TUTORIAL_BOT, true, null, 1)]);
     room.tutorialBonus = !prof.tutorialDone; // the bonus is paid for the first finished tutorial only
@@ -626,7 +626,7 @@ async function handleApi(req, res, url) {
   }
 
   if (url.pathname === '/api/quick/join') {
-    if (!prof) return json(res, 401, { error: 'Bitte melde dich neu an.', missing: true });
+    if (!prof) return json(res, 401, { error: 'err.relogin', missing: true });
     let e = queue.get(prof.id);
     if (!e || e.match) {
       e = { profile: prof, level: E.levelInfo(prof.xp).level, since: Date.now(), lastPoll: Date.now(), match: null };
@@ -635,7 +635,7 @@ async function handleApi(req, res, url) {
     return json(res, 200, queueStatus(e));
   }
   if (url.pathname === '/api/quick/status') {
-    if (!prof) return json(res, 401, { error: 'Bitte melde dich neu an.', missing: true });
+    if (!prof) return json(res, 401, { error: 'err.relogin', missing: true });
     const e = queue.get(prof.id);
     if (!e) return json(res, 200, { state: 'none' });
     e.lastPoll = Date.now();
@@ -653,17 +653,18 @@ async function handleApi(req, res, url) {
 
   if (url.pathname === '/api/action') {
     const { room, idx, player } = auth(body);
-    if (!player) return json(res, 403, { error: 'Du sitzt nicht an diesem Tisch.' });
+    if (!player) return json(res, 403, { error: 'err.notAtTable' });
     const a = body.action || {};
-    let err = handleLobbyAction(room, idx, a);
+    let err = handleLobbyAction(room, idx, a), params;
     if (err === undefined) {
-      if (!room.state) err = 'Das Spiel hat noch nicht begonnen.';
+      if (!room.state) err = 'err.notStarted';
       else {
         const r = E.act(room.state, idx, a);
-        err = r.ok ? null : r.error;
+        if (!r.ok) { err = r.error; params = r.params; }
       }
     }
-    if (err) return json(res, 400, { error: err, view: roomView(room, idx) });
+    // Errors are text keys (err.*) – the client shows them in its language.
+    if (err) return json(res, 400, { error: err, params, view: roomView(room, idx) });
     if (rooms.has(room.code)) {
       broadcast(room);
       schedule(room);
@@ -673,7 +674,7 @@ async function handleApi(req, res, url) {
     return json(res, 200, { ok: true, view: still >= 0 ? roomView(room, still) : null });
   }
 
-  json(res, 404, { error: 'Nicht gefunden' });
+  json(res, 404, { error: 'err.notFound' });
 }
 
 const server = http.createServer((req, res) => {
@@ -688,7 +689,7 @@ const server = http.createServer((req, res) => {
     if (url.pathname === '/api/health') return json(res, 200, { ok: true });
     handleApi(req, res, url).catch(e => {
       console.error(e);
-      if (!res.headersSent) json(res, 500, { error: 'Serverfehler' });
+      if (!res.headersSent) json(res, 500, { error: 'err.server' });
     });
     return;
   }

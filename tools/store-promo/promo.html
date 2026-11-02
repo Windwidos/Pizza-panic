@@ -47,17 +47,77 @@
 <body>
 <div id="root"></div>
 <script>
+  // Layout per slide; headline (h) and subline (p) per language (?lang=de|en|fr|es|it, default de).
   const SLIDES = {
-    1: { h: 'Belege Pizzen.<br>Stifte Panik!', p: 'Das Online-Kartenspiel für 2–6 Freunde', shot: '1-home', deco: [['burn', 40, 1500, -12], ['steal', 860, 1480, 10]] },
-    2: { h: 'Belege alle Pizzen<br>deiner Bestellung', p: 'Leuchtende Felder zeigen dir, wo deine Karte hinpasst', shot: '2-game', deco: [['sauce', 30, 1560, -8], ['mozzarella', 880, 1590, 12]] },
-    3: { h: 'Klauen, Anbrennen,<br>Chaos stiften!', p: 'Mit Aktionskarten ärgerst du die Konkurrenz', shot: '3-steal', rot: '-2deg', deco: [['steal', 20, 1450, -15], ['burn', 870, 1500, 14]] },
-    4: { h: '5 Themen-Packs', p: 'Neue Zutaten, Spezial-Pizzen und eigener Look – jede Runde eine neue Bestellung', shot: '4-theme', deco: [['peperoni', 30, 1520, -10], ['onion', 870, 1560, 10]] },
-    5: { h: 'Pizzabretter & Emotes<br>freischalten', p: 'Münzen verdienst du in jeder Runde', shot: '5-shop', deco: [['pineapple', 30, 1560, -10], ['olive', 880, 1540, 12]] },
-    6: { h: 'Pizzabäcker Luigi<br>erklärt dir alles', p: 'Lerne das Spiel Schritt für Schritt in einer Übungsrunde', shot: '6-tutorial', chef: 'chef-wave' },
-    7: { h: 'Freunde, Spieler<br>oder Bots', p: 'Schnelles Spiel mit Gegnern auf deinem Level – oder sofort gegen Bots', shot: '7-quick', deco: [['basil', 30, 1560, -10], ['mushroom', 880, 1560, 12]] },
-    8: { h: 'Steig auf bis zur<br>Pizza-Legende', p: 'Sammle XP, steig im Level auf und schalte Belohnungen frei', shot: '8-win', chef: 'chef-cheer' },
+    1: { shot: '1-home', deco: [['burn', 40, 1500, -12], ['steal', 860, 1480, 10]] },
+    2: { shot: '2-game', deco: [['sauce', 30, 1560, -8], ['mozzarella', 880, 1590, 12]] },
+    3: { shot: '3-steal', rot: '-2deg', deco: [['steal', 20, 1450, -15], ['burn', 870, 1500, 14]] },
+    4: { shot: '4-theme', deco: [['peperoni', 30, 1520, -10], ['onion', 870, 1560, 10]] },
+    5: { shot: '5-shop', deco: [['pineapple', 30, 1560, -10], ['olive', 880, 1540, 12]] },
+    6: { shot: '6-tutorial', chef: 'chef-wave' },
+    7: { shot: '7-quick', deco: [['basil', 30, 1560, -10], ['mushroom', 880, 1560, 12]] },
+    8: { shot: '8-win', chef: 'chef-cheer' },
+  };
+  const TEXT = {
+    de: {
+      1: ['Belege Pizzen.<br>Stifte Panik!', 'Das Online-Kartenspiel für 2–6 Freunde'],
+      2: ['Belege alle Pizzen<br>deiner Bestellung', 'Leuchtende Felder zeigen dir, wo deine Karte hinpasst'],
+      3: ['Klauen, Anbrennen,<br>Chaos stiften!', 'Mit Aktionskarten ärgerst du die Konkurrenz'],
+      4: ['5 Themen-Packs', 'Neue Zutaten, Spezial-Pizzen und eigener Look – jede Runde eine neue Bestellung'],
+      5: ['Pizzabretter & Emotes<br>freischalten', 'Münzen verdienst du in jeder Runde'],
+      6: ['Pizzabäcker Luigi<br>erklärt dir alles', 'Lerne das Spiel Schritt für Schritt in einer Übungsrunde'],
+      7: ['Freunde, Spieler<br>oder Bots', 'Schnelles Spiel mit Gegnern auf deinem Level – oder sofort gegen Bots'],
+      8: ['Steig auf bis zur<br>Pizza-Legende', 'Sammle XP, steig im Level auf und schalte Belohnungen frei'],
+      feature: 'Das Pizza-Kartenspiel für Freunde!',
+    },
+    en: {
+      1: ['Top pizzas.<br>Spread panic!', 'The online card game for 2–6 friends'],
+      2: ['Finish every pizza<br>on your order', 'Glowing spots show you where your card fits'],
+      3: ['Steal, burn,<br>cause chaos!', 'Action cards let you mess with the competition'],
+      4: ['5 theme packs', 'New toppings, special pizzas and a fresh look – a new order every round'],
+      5: ['Unlock pizza boards<br>& emotes', 'Earn coins in every round'],
+      6: ['Pizza baker Luigi<br>shows you the ropes', 'Learn the game step by step in a practice round'],
+      7: ['Friends, players<br>or bots', 'Quick Match against players at your level – or play bots right away'],
+      8: ['Rise to<br>pizza legend', 'Collect XP, level up and unlock rewards'],
+      feature: 'The pizza card game for friends!',
+    },
+    fr: {
+      1: ['Garnis tes pizzas.<br>Sème la panique !', 'Le jeu de cartes en ligne pour 2 à 6 amis'],
+      2: ['Termine toutes<br>les pizzas commandées', 'Les cases lumineuses montrent où va ta carte'],
+      3: ['Voler, brûler,<br>semer le chaos !', 'Les cartes action embêtent tes adversaires'],
+      4: ['5 packs à thème', 'Nouveaux ingrédients, pizzas spéciales et nouveau look – une nouvelle commande à chaque partie'],
+      5: ['Débloque planches<br>et emotes', 'Gagne des pièces à chaque partie'],
+      6: ['Luigi le pizzaiolo<br>t’explique tout', 'Apprends le jeu pas à pas dans une partie d’entraînement'],
+      7: ['Amis, joueurs<br>ou bots', 'Partie rapide contre des joueurs de ton niveau – ou tout de suite contre des bots'],
+      8: ['Deviens une<br>légende de la pizza', 'Gagne de l’XP, monte de niveau et débloque des récompenses'],
+      feature: 'Le jeu de cartes pizza entre amis !',
+    },
+    es: {
+      1: ['Prepara pizzas.<br>¡Siembra el pánico!', 'El juego de cartas online para 2–6 amigos'],
+      2: ['Termina todas las<br>pizzas de tu pedido', 'Las casillas iluminadas te muestran dónde encaja tu carta'],
+      3: ['¡Roba, quema,<br>provoca el caos!', 'Con las cartas de acción fastidias a tus rivales'],
+      4: ['5 packs temáticos', 'Nuevos ingredientes, pizzas especiales y otro ambiente: un pedido nuevo en cada partida'],
+      5: ['Desbloquea tablas<br>y emotes', 'Gana monedas en cada partida'],
+      6: ['Luigi, el pizzero,<br>te lo explica todo', 'Aprende el juego paso a paso en una partida de práctica'],
+      7: ['Amigos, jugadores<br>o bots', 'Partida rápida contra rivales de tu nivel, o al instante contra bots'],
+      8: ['Llega a ser una<br>leyenda de la pizza', 'Gana XP, sube de nivel y desbloquea recompensas'],
+      feature: '¡El juego de cartas de pizza para amigos!',
+    },
+    it: {
+      1: ['Farcisci pizze.<br>Scatena il panico!', 'Il gioco di carte online per 2–6 amici'],
+      2: ['Completa tutte le<br>pizze della comanda', 'Le caselle luminose ti mostrano dove va la tua carta'],
+      3: ['Ruba, brucia,<br>scatena il caos!', 'Con le carte azione dai filo da torcere agli avversari'],
+      4: ['5 pacchetti a tema', 'Nuovi ingredienti, pizze speciali e un nuovo look – una nuova comanda a ogni partita'],
+      5: ['Sblocca taglieri<br>ed emote', 'Guadagni monete a ogni partita'],
+      6: ['Il pizzaiolo Luigi<br>ti spiega tutto', 'Impara il gioco passo dopo passo in una partita di prova'],
+      7: ['Amici, giocatori<br>o bot', 'Partita veloce contro giocatori del tuo livello – o subito contro i bot'],
+      8: ['Diventa una<br>leggenda della pizza', 'Raccogli XP, sali di livello e sblocca ricompense'],
+      feature: 'Il gioco di carte sulla pizza per amici!',
+    },
   };
   const q = new URLSearchParams(location.search);
+  const L = TEXT[q.get('lang')] || TEXT.de;
+  document.documentElement.lang = TEXT[q.get('lang')] ? q.get('lang') : 'de';
   const root = document.getElementById('root');
   if (q.get('feature')) {
     document.body.style.width = '1024px'; document.body.style.height = '500px';
@@ -65,13 +125,16 @@
       <img class="logo" src="img/logo.png">
       <div class="ings">${['sauce', 'basil', 'salami', 'mushroom', 'pepper', 'mozzarella'].map(i => `<img src="img/${i}.png">`).join('')}</div>
       <img class="chef" src="img/chef-cheer.png">
-      <div class="tag">Das Pizza-Kartenspiel für Freunde!</div>
+      <div class="tag">${L.feature}</div>
     </div>`;
   } else {
-    const s = SLIDES[q.get('n') || 1];
+    const n = q.get('n') || 1;
+    const s = SLIDES[n];
+    // Raw shots per language live in _shots/<lang>/ (German directly in _shots/).
+    const dir = q.get('lang') && q.get('lang') !== 'de' ? `_shots/${q.get('lang')}/` : '_shots/';
     root.innerHTML = `<div class="slide">
-      <div class="cap"><h1>${s.h}</h1><p>${s.p}</p></div>
-      <div class="phone" style="--rot:${s.rot || '0deg'}"><img class="shot" src="_shots/${s.shot}.png"></div>
+      <div class="cap"><h1>${L[n][0]}</h1><p>${L[n][1]}</p></div>
+      <div class="phone" style="--rot:${s.rot || '0deg'}"><img class="shot" src="${dir}${s.shot}.png"></div>
       ${(s.deco || []).map(([img, x, y, r]) => `<img class="deco" src="img/${img}.png" style="left:${x}px;top:${y}px;transform:rotate(${r}deg)">`).join('')}
       ${s.chef ? `<img class="deco" src="img/${s.chef}.png" style="width:300px;left:-10px;top:1320px">` : ''}
     </div>`;

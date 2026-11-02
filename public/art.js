@@ -57,8 +57,9 @@ window.Art = (function () {
     return `<img class="ico" src="img/${name}.png" width="${size}" height="${size}" alt="${label}" draggable="false">`;
   }
 
+  // Every layer id is also a single-card type, so its name comes from the language file (ing.<id>).
   function icon(layer, size) {
-    const label = SmashEngine.LAYERS[layer];
+    const label = I18n.t('ing.' + layer);
     if (PAINTED.has(layer)) return img(layer, size, label);
     return `<svg class="ico" viewBox="0 0 40 40" width="${size}" height="${size}" aria-label="${label}">${ICONS[layer]}</svg>`;
   }
@@ -67,7 +68,7 @@ window.Art = (function () {
   function cardArt(t, size) {
     const def = SmashEngine.TYPES[t];
     if (def.kind === 'act') {
-      return PAINTED.has(t) ? img(t, size, def.name) : `<span class="act-ico" style="font-size:${size * 0.7}px">${ACTIONS[t]}</span>`;
+      return PAINTED.has(t) ? img(t, size, I18n.t('act.' + t)) : `<span class="act-ico" style="font-size:${size * 0.7}px">${ACTIONS[t]}</span>`;
     }
     const ls = def.layers;
     const step = ls.length > 3 ? size * 0.42 : size * 0.55;

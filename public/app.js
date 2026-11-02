@@ -13,6 +13,34 @@
   const LS_NAME = 'pizzapanic.name';
   const LS_PROFILE = 'pizzapanic.profile';
   const LS_TUT = 'pizzapanic.tutstep';
+  const LS_LANG = 'pizzapanic.lang';
+
+  // ---------- Sprache ----------
+  // Saved choice first, otherwise the phone's language (English if none of ours fits).
+  let savedLang = null;
+  try { savedLang = localStorage.getItem(LS_LANG); } catch { /* ignore */ }
+  I18n.setLang(savedLang || I18n.detect(navigator.languages || [navigator.language]));
+  // `t` is a common local name in this file (types, trays, themes), so the translator is called tr().
+  const tr = (k, p) => I18n.t(k, p);
+  // <html lang> plus the few labels that style.css draws itself (content: var(--t-…)).
+  function applyLang() {
+    const root = document.documentElement;
+    root.lang = I18n.lang();
+    for (const k of ['order', 'board', 'action']) root.style.setProperty(`--t-${k}`, JSON.stringify(tr('css.' + k)));
+  }
+  applyLang();
+  const ingName = type => tr((T[type] && T[type].kind === 'act' ? 'act.' : 'ing.') + type);
+  const actDesc = type => tr('act.' + type + '.desc');
+  const recipeName = i => tr('recipe.' + E.RECIPES[i].id);
+  const themeName = id => tr('theme.' + id);
+  const accOf = type => tr('acc.' + type);
+  // Stack description in the log / banners: { r } finished pizza, { t } single card, { n } half pizza.
+  function labelText(label) {
+    if (!label) return '';
+    if (label.r != null) return tr('label.done', { recipe: recipeName(label.r) });
+    if (label.t != null) return ingName(label.t);
+    return tr('label.half', { n: label.n });
+  }
 
   let session = null;
   try { session = JSON.parse(localStorage.getItem(LS_SESSION)); } catch { /* ignore */ }
@@ -34,20 +62,33 @@
 
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+  // Game log entries are language-neutral { n, k, p } (see engine.js log()); this turns one into a sentence.
+  // html = true: player names (and the other inserted values) are escaped for innerHTML.
+  function logText(entry, html) {
+    if (!entry) return '';
+    if (!entry.k) return html ? esc(entry.text || '') : entry.text || '';
+    const v = s => (html ? esc(s) : String(s));
+    const p = entry.p || {};
+    const q = {};
+    if (p.who != null) q.who = v(p.who);
+    if (p.victim != null) q.victim = v(p.victim);
+    if (p.card != null) q.card = v(ingName(p.card));
+    if (p.recipe != null) q.recipe = v(recipeName(p.recipe));
+    if (p.label != null) q.label = v(labelText(p.label));
+    if (entry.k === 'log.steal') {
+      q.from = p.from == null ? tr('log.steal.fromOwn') : tr('log.steal.from', { name: v(p.from) });
+      q.to = p.to == null ? tr('log.steal.toOwn') : tr('log.steal.to', { name: v(p.to) });
+    }
+    return tr(entry.k, q);
+  }
+
   // ---------- Netzwerk ----------
 
   // The free server sleeps when idle and needs ~20–40 s to wake up. Instead of a dry hint we show a loading
   // screen: the logo fills up with colour, a bar runs and funny kitchen messages rotate (Sims-style).
   // It only appears if the server doesn't answer within a moment.
-  const LOADING_LINES = [
-    'Steinofen wird angeheizt …', 'Teig wird durch die Luft gewirbelt …', 'Tomaten werden zu Soße überredet …',
-    'Mozzarella wird gezupft. Mit Liebe.', 'Basilikum wird einzeln gestreichelt …', 'Luigi sucht seinen Pizzaschieber …',
-    'Bestellungen werden sortiert …', 'Salami wird hauchdünn geschnitten …', 'Olivenöl wird großzügig verteilt …',
-    'Bots üben ihr Pokerface …', 'Pizzabretter werden poliert …', 'Zwiebeln werden zum Weinen gebracht …',
-    'Ananas wird gesucht … ach, die Diskussion lassen wir.', 'Pizzakartons werden gefaltet …',
-    'Oregano wird einzeln gezählt …', 'Müll wird rausgebracht. Und gleich wieder durchwühlt …',
-    'Pilze üben ihren Auftritt …', 'Fast fertig. Wirklich. Ehrenwort.',
-  ];
+  // The rotating lines live in the dictionary as one array ('loader.lines'), read fresh so a language switch applies.
+  const loadingLines = () => { const l = tr('loader.lines'); return Array.isArray(l) ? l : [l]; };
   const loaderEl = document.getElementById('loader');
   let serverAwake = false;
   let waking = null;
@@ -55,7 +96,7 @@
 
   function showLoader() {
     if (!loaderEl.classList.contains('hidden')) return;
-    const lines = LOADING_LINES.slice().sort(() => Math.random() - 0.5);
+    const lines = loadingLines().slice().sort(() => Math.random() - 0.5);
     let k = 0;
     loaderEl.innerHTML = `
       <div class="loader-box">
@@ -65,7 +106,7 @@
         </div>
         <div class="loader-bar"><i></i></div>
         <p class="loader-line">${lines[0]}</p>
-        <small>Die Küche ist nach einer Pause kurz eingeschlafen – gleich geht's los!</small>
+        <small>${tr('loader.sleepy')}</small>
       </div>`;
     loaderEl.classList.remove('hidden', 'done');
     requestAnimationFrame(() => requestAnimationFrame(() => loaderEl.classList.add('run')));
@@ -116,11 +157,21 @@
     let j = {};
     try { j = await r.json(); } catch { /* ignore */ }
     if (!r.ok || j.error) {
-      const err = new Error(j.error || 'Verbindungsproblem');
+      // The server answers with a key (err.xxx) and optional params; e.key keeps it for checks, e.message is translated.
+      const key = j.error || 'net.problem';
+      const err = new Error(errText(key, j.params));
+      err.key = key;
+      err.params = j.params;
       err.view = j.view;
       throw err;
     }
     return j;
+  }
+
+  function errText(key, params) {
+    if (typeof key !== 'string') return String(key);
+    if (key === 'err.doublesUsed') params = { n: S.DOUBLES_PER_DAY, ...(params || {}) };
+    return /^(err|net)\./.test(key) ? tr(key, params) : key;
   }
 
   // Views arrive both over the live connection and as action replies; never go back to an older one.
@@ -154,7 +205,7 @@
       saveSession(null);
       view = null;
       closeSheet();
-      toast('Du sitzt nicht mehr an diesem Tisch.');
+      toast(tr('toast.gone'));
       render();
     });
   }
@@ -200,7 +251,7 @@
     try {
       profile = (await post('/api/profile/get', withProfile({}))).profile;
     } catch (e) {
-      if (/Profil/.test(e.message)) dropProfile();
+      if (e.key === 'err.profileMissing') dropProfile();
       else setTimeout(loadProfile, 4000); // server still waking up
     }
     profileLoading = false;
@@ -209,7 +260,7 @@
 
   async function createProfile() {
     const name = (document.getElementById('name').value || '').trim();
-    if (!name) return toast('Bitte gib deinen Namen ein.');
+    if (!name) return toast(tr('err.nameMissing'));
     try {
       const r = await post('/api/profile/create', { name });
       profileKey = { id: r.profile.id, token: r.token };
@@ -223,7 +274,7 @@
   }
 
   function levelBadge(level) {
-    return `<span class="lv" title="Level ${level}">${level}</span>`;
+    return `<span class="lv" title="${tr('level.badge', { level })}">${level}</span>`;
   }
 
   function xpBar(info, cls) {
@@ -232,7 +283,7 @@
 
   // Server answered "profile missing": start over with a new profile.
   function handleMissing(e) {
-    if (e && /neu an/.test(e.message)) {
+    if (e && e.key === 'err.relogin') {
       dropProfile();
       render();
       return true;
@@ -344,19 +395,19 @@
   const consumable = item => !item.supporter && !item.theme;
 
   async function buyIap(productId) {
-    if (!Billing) return toast('Münzen kannst du in der Android-App kaufen.');
+    if (!Billing) return toast(tr('toast.coinsInApp'));
     const item = S.iapById(productId);
     try {
       const t = await Billing.purchaseProduct({
         productIdentifier: productId, productType: 'inapp', quantity: 1,
         ...(consumable(item) ? { isConsumable: false, autoAcknowledgePurchases: false } : {}),
       });
-      if (t.purchaseState !== '1' || !t.purchaseToken) return toast('Der Kauf wird noch bearbeitet – er wird freigeschaltet, sobald Google ihn bestätigt.');
+      if (t.purchaseState !== '1' || !t.purchaseToken) return toast(tr('toast.purchasePending'));
       await redeem(productId, t.purchaseToken);
-      celebrate(item.supporter ? '⭐ Danke für deine Unterstützung!' : item.theme ? `${E.THEMES[item.theme].icon} Freigeschaltet!` : `+${item.coins} 🪙`);
+      celebrate(item.supporter ? tr('toast.thanksSupport') : item.theme ? `${E.THEMES[item.theme].icon} ${tr('toast.unlocked')}` : `+${item.coins} 🪙`);
       render();
     } catch (e) {
-      if (!/cancel/i.test(String((e && e.message) || e))) toast('Kauf fehlgeschlagen. Bitte später nochmal versuchen.');
+      if (!/cancel/i.test(String((e && e.message) || e))) toast(tr('toast.purchaseFailed'));
     }
   }
 
@@ -376,7 +427,7 @@
 
   async function watchForCoins() {
     const res = await showRewarded();
-    if (res === 'unavailable') return toast('Gerade ist kein Video verfügbar. Versuch es gleich nochmal.');
+    if (res === 'unavailable') return toast(tr('toast.noVideo'));
     if (res !== 'rewarded') return;
     try {
       profile = (await post('/api/ads/coins', withProfile({}))).profile;
@@ -390,7 +441,7 @@
   async function doubleReward() {
     if (!profile.supporter) {
       const res = await showRewarded();
-      if (res === 'unavailable') return toast('Gerade ist kein Video verfügbar. Versuch es gleich nochmal.');
+      if (res === 'unavailable') return toast(tr('toast.noVideo'));
       if (res !== 'rewarded') return;
     }
     await send({ type: 'double' });
@@ -415,30 +466,31 @@
   let botCfg = { skill: 'normal', opponents: 2, theme: '' };
   try { botCfg = { ...botCfg, ...JSON.parse(localStorage.getItem(LS_BOTS)) }; } catch { /* ignore */ }
 
+  // Names and notes come from the dictionary: quick.skill.<id> / quick.skill.<id>.note
   const SKILLS = [
-    { id: 'easy', icon: '😊', name: 'Leicht', note: 'greift nie an · 50 % XP' },
-    { id: 'normal', icon: '🙂', name: 'Normal', note: '75 % XP' },
-    { id: 'hard', icon: '😈', name: 'Schwer', note: 'jagt den Führenden · 100 % XP' },
+    { id: 'easy', icon: '😊' },
+    { id: 'normal', icon: '🙂' },
+    { id: 'hard', icon: '😈' },
   ];
 
   function quickSheet() {
     const themes = Object.entries(E.THEMES).filter(([id]) => S.ownsTheme(profile, id));
     const seg = (key, items) => `<div class="seg">${items.map(it =>
       `<button class="${String(botCfg[key]) === String(it.id) ? 'on' : ''}" data-do="botCfg" data-key="${key}" data-id="${it.id}">${it.label}</button>`).join('')}</div>`;
-    openSheet(`<h2>⚡ Schnelles Spiel</h2>
+    openSheet(`<h2>⚡ ${tr('quick.title')}</h2>
       <button class="mode-card" data-do="quickReal">
-        <span class="mb-ico">👥</span><span><b>Echte Spieler</b><small>Gegner auf deinem Level · volle XP</small></span>
+        <span class="mb-ico">👥</span><span><b>${tr('quick.real')}</b><small>${tr('quick.real.sub')}</small></span>
       </button>
       <div class="mode-card bots">
-        <div class="mc-head"><span class="mb-ico">🤖</span><span><b>Gegen Bots</b><small>Sofort los, ohne Warten</small></span></div>
-        <div class="tc-label">Schwierigkeit</div>
-        ${seg('skill', SKILLS.map(s => ({ id: s.id, label: `${s.icon} ${s.name}` })))}
-        <p class="note">${esc(SKILLS.find(s => s.id === botCfg.skill).note)}</p>
-        <div class="tc-label">Gegner</div>
-        ${seg('opponents', [1, 2, 3].map(n => ({ id: n, label: `${n} Bot${n > 1 ? 's' : ''}` })))}
-        ${themes.length ? `<div class="tc-label">Thema</div>
-          ${seg('theme', [{ id: '', label: '🍕 Klassisch' }].concat(themes.map(([id, t]) => ({ id, label: `${t.icon} ${esc(t.name)}` }))))}` : ''}
-        <button class="btn primary big" data-do="startBots">🤖 Los geht's!</button>
+        <div class="mc-head"><span class="mb-ico">🤖</span><span><b>${tr('quick.bots')}</b><small>${tr('quick.bots.sub')}</small></span></div>
+        <div class="tc-label">${tr('quick.skill')}</div>
+        ${seg('skill', SKILLS.map(s => ({ id: s.id, label: `${s.icon} ${tr('quick.skill.' + s.id)}` })))}
+        <p class="note">${esc(tr('quick.skill.' + botCfg.skill + '.note'))}</p>
+        <div class="tc-label">${tr('quick.opponents')}</div>
+        ${seg('opponents', [1, 2, 3].map(n => ({ id: n, label: tr(n > 1 ? 'quick.bots.other' : 'quick.bots.one', { n }) })))}
+        ${themes.length ? `<div class="tc-label">${tr('quick.theme')}</div>
+          ${seg('theme', [{ id: '', label: `🍕 ${tr('theme.classic')}` }].concat(themes.map(([id, t]) => ({ id, label: `${t.icon} ${esc(themeName(id))}` }))))}` : ''}
+        <button class="btn primary big" data-do="startBots">🤖 ${tr('quick.go')}</button>
       </div>`, 'info', 'quick');
   }
 
@@ -581,8 +633,8 @@
 
   function stackLabel(st, R) {
     const done = E.completeRecipe(st, R);
-    if (done >= 0) return `✓ ${E.RECIPES[done].name}`;
-    return E.candidates(st, R).map(i => E.RECIPES[i].name).join(' / ');
+    if (done >= 0) return `✓ ${recipeName(done)}`;
+    return E.candidates(st, R).map(recipeName).join(' / ');
   }
 
   // ---------- Rendering ----------
@@ -629,93 +681,93 @@
     const adsLeft = S.COIN_ADS_PER_DAY - (profile.coinAdsToday || 0);
     let body = '';
     if (shopTab === 'themes') {
-      body = `<p class="note center">Jedes Pack bringt einen eigenen Hintergrund, neue Zutaten und 2 Spezial-Pizzen – und jede Runde eine andere Speisekarte. Wähle es beim Tisch-Eröffnen, alle am Tisch spielen mit.</p>
+      body = `<p class="note center">${tr('shop.themes.intro')}</p>
         ${S.themePacks().map(p => {
           const t = E.THEMES[p.theme];
           const owned = S.ownsTheme(profile, p.theme);
           const ings = Object.entries(T).filter(([, d]) => d.theme === p.theme);
           const specials = E.themeRecipes(p.theme).map(i => E.RECIPES[i]);
-          const btn = owned ? '<span class="pill ok">✓ Gekauft</span>'
+          const btn = owned ? `<span class="pill ok">✓ ${tr('shop.bought')}</span>`
             : isNative ? `<button class="btn primary" data-do="buyIap" data-id="${p.id}">${esc(iapPrices[p.id] || p.price)}</button>`
-            : `<span class="pill">${esc(p.price)} · in der App</span>`;
+            : `<span class="pill">${tr('shop.inApp', { price: esc(p.price) })}</span>`;
           return `<div class="theme-card ${owned ? 'owned' : ''}">
-            <div class="tc-banner" style="background-image:url(img/bg-${p.theme}-thumb.webp)"><span>${t.icon}</span><b>${esc(t.name)}</b></div>
+            <div class="tc-banner" style="background-image:url(img/bg-${p.theme}-thumb.webp)"><span>${t.icon}</span><b>${esc(themeName(p.theme))}</b></div>
             <div class="tc-body">
-              <div class="tc-label">Neue Zutaten</div>
-              <div class="tc-ings">${ings.map(([type, d]) => `<span>${A.icon(d.layers[0], 30)}<small>${esc(d.name)}</small></span>`).join('')}</div>
-              <div class="tc-label">Spezial-Pizzen</div>
-              ${specials.map(r => `<div class="tc-recipe"><b>${esc(r.name)}</b><span>${r.layers.map(l => A.icon(l, 20)).join('')}</span></div>`).join('')}
+              <div class="tc-label">${tr('shop.newIngredients')}</div>
+              <div class="tc-ings">${ings.map(([type, d]) => `<span>${A.icon(d.layers[0], 30)}<small>${esc(ingName(type))}</small></span>`).join('')}</div>
+              <div class="tc-label">${tr('shop.specials')}</div>
+              ${specials.map(r => `<div class="tc-recipe"><b>${esc(tr('recipe.' + r.id))}</b><span>${r.layers.map(l => A.icon(l, 20)).join('')}</span></div>`).join('')}
               <div class="tc-foot">${btn}</div>
             </div>
           </div>`;
         }).join('')}`;
     } else if (shopTab === 'trays') {
       const lv = E.levelInfo(profile.xp).level;
-      body = `<p class="note center">Du bist Level ${lv}. Besondere Pizzabretter gibt es erst ab einem bestimmten Level – zwei davon schenkt dir das Spiel.</p>
+      body = `<p class="note center">${tr('shop.trays.intro', { level: lv })}</p>
         <div class="shop-grid">${S.TRAYS.map(t => {
         const owned = S.ownsTray(profile, t.id, lv);
         const lockedBy = t.reward && lv < t.reward ? t.reward : t.level && lv < t.level && !owned ? t.level : 0;
-        const btn = eq === t.id ? '<span class="pill ok">✓ Benutzt</span>'
-          : owned ? `<button class="btn small" data-do="equipTray" data-id="${t.id}">Benutzen</button>`
-          : t.supporter ? '<span class="pill">⭐ Unterstützer</span>'
-          : t.reward ? `<span class="pill">🏅 Gratis ab Level ${t.reward}</span>`
-          : lockedBy ? `<span class="pill lock">🔒 ab Level ${lockedBy}</span>`
+        const btn = eq === t.id ? `<span class="pill ok">✓ ${tr('shop.used')}</span>`
+          : owned ? `<button class="btn small" data-do="equipTray" data-id="${t.id}">${tr('shop.use')}</button>`
+          : t.supporter ? `<span class="pill">⭐ ${tr('shop.supporterOnly')}</span>`
+          : t.reward ? `<span class="pill">🏅 ${tr('shop.freeFromLevel', { level: t.reward })}</span>`
+          : lockedBy ? `<span class="pill lock">🔒 ${tr('shop.fromLevel', { level: lockedBy })}</span>`
           : `<button class="btn small primary" data-do="buyItem" data-id="tray:${t.id}" ${profile.coins < t.price ? 'disabled' : ''}>🪙 ${t.price}</button>`;
-        return `<div class="shop-item ${eq === t.id ? 'on' : ''} ${lockedBy ? 'locked' : ''}">${traySwatch(t.id)}<b>${esc(t.name)}</b>${btn}</div>`;
+        return `<div class="shop-item ${eq === t.id ? 'on' : ''} ${lockedBy ? 'locked' : ''}">${traySwatch(t.id)}<b>${esc(tr('tray.' + t.id))}</b>${btn}</div>`;
       }).join('')}</div>`;
     } else if (shopTab === 'emotes') {
-      const groups = [{ pack: 'free', name: 'Gratis', price: 0 }].concat(S.PACKS);
+      const groups = [{ pack: 'free', price: 0 }].concat(S.PACKS);
       body = groups.map(g => {
         const owned = S.ownsPack(profile, g.pack);
-        const btn = owned ? '<span class="pill ok">✓ Freigeschaltet</span>'
-          : g.supporter ? '<span class="pill">⭐ Unterstützer</span>'
+        const btn = owned ? `<span class="pill ok">✓ ${tr('shop.unlocked')}</span>`
+          : g.supporter ? `<span class="pill">⭐ ${tr('shop.supporterOnly')}</span>`
           : `<button class="btn small primary" data-do="buyItem" data-id="pack:${g.id}" ${profile.coins < g.price ? 'disabled' : ''}>🪙 ${g.price}</button>`;
-        return `<div class="emote-pack"><div class="ep-head"><b>${esc(g.name)}</b>${btn}</div>
-          <div class="ep-list">${S.EMOTES.filter(e => e.pack === g.pack).map(e => `<span class="emote-chip">${e.icon} ${esc(e.text)}</span>`).join('')}</div></div>`;
+        return `<div class="emote-pack"><div class="ep-head"><b>${esc(g.id ? tr('pack.' + g.id) : tr('shop.free'))}</b>${btn}</div>
+          <div class="ep-list">${S.EMOTES.filter(e => e.pack === g.pack).map(e => `<span class="emote-chip">${e.icon} ${esc(tr('emote.' + e.id))}</span>`).join('')}</div></div>`;
       }).join('');
     } else {
       const sup = S.IAP.find(p => p.supporter);
       body = `
         ${isNative ? `
           <button class="shop-video" data-do="adCoins" ${adsLeft <= 0 ? 'disabled' : ''}>
-            <span>📺</span><span><b>Video ansehen: +${S.AD_COINS} 🪙</b><small>${adsLeft > 0 ? `Noch ${adsLeft} Videos heute` : 'Morgen wieder verfügbar'}</small></span>
+            <span>📺</span><span><b>${tr('shop.video', { coins: S.AD_COINS })}</b><small>${adsLeft > 0 ? tr(adsLeft > 1 ? 'shop.videosLeft.other' : 'shop.videosLeft.one', { n: adsLeft }) : tr('shop.videosTomorrow')}</small></span>
           </button>` : ''}
         <div class="shop-grid">${S.IAP.filter(p => !p.supporter).map(p => `
-          <div class="shop-item coin-pack">${p.tag ? `<span class="tag">${p.tag}</span>` : ''}
-            <div class="coin-big">🪙</div><b>${p.label}</b>
+          <div class="shop-item coin-pack">${p.tag ? `<span class="tag">${tr('iap.tag.' + p.tag)}</span>` : ''}
+            <div class="coin-big">🪙</div><b>${p.theme ? esc(themeName(p.theme)) : tr('iap.' + p.id)}</b>
             <button class="btn small primary" data-do="buyIap" data-id="${p.id}">${esc(iapPrices[p.id] || p.price)}</button>
           </div>`).join('')}</div>
         <div class="supporter-card ${profile.supporter ? 'on' : ''}">
           <img src="img/chef-cheer.png" alt="">
           <div>
-            <h3>⭐ Unterstützer:in werden</h3>
+            <h3>⭐ ${tr('shop.sup.title')}</h3>
             <ul>
-              <li>Goldenes Pizzabrett & Küchenchef-Emote 👑</li>
-              <li>⭐ neben deinem Namen</li>
-              <li>Belohnung verdoppeln ohne Video</li>
-              <li>+${sup.coins} 🪙 obendrauf</li>
+              <li>${tr('shop.sup.perk1')}</li>
+              <li>${tr('shop.sup.perk2')}</li>
+              <li>${tr('shop.sup.perk3')}</li>
+              <li>${tr('shop.sup.perk4', { coins: sup.coins })}</li>
             </ul>
-            ${profile.supporter ? '<span class="pill ok">Danke, du bist dabei! ❤️</span>'
-              : `<button class="btn primary" data-do="buyIap" data-id="${sup.id}">${esc(iapPrices[sup.id] || sup.price)} – einmalig</button>`}
+            ${profile.supporter ? `<span class="pill ok">${tr('shop.sup.thanks')}</span>`
+              : `<button class="btn primary" data-do="buyIap" data-id="${sup.id}">${tr('shop.sup.buy', { price: esc(iapPrices[sup.id] || sup.price) })}</button>`}
           </div>
         </div>
-        ${!isNative ? '<p class="note center">Münzen kaufen und Videos gibt es in der Android-App.</p>' : ''}`;
+        ${!isNative ? `<p class="note center">${tr('shop.coinsInApp')}</p>` : ''}`;
     }
     app.innerHTML = `
       <div class="home shop">
         <div class="shop-top">
-          <button class="tbtn" data-do="closeShop">← Zurück</button>
-          <h2>🛒 Shop</h2>
+          <button class="tbtn" data-do="closeShop">← ${tr('shop.back')}</button>
+          <h2>🛒 ${tr('shop.title')}</h2>
           ${coinChip()}
         </div>
         <div class="tabs">
-          <button class="${shopTab === 'themes' ? 'on' : ''}" data-do="shopTab" data-id="themes">Themen</button>
-          <button class="${shopTab === 'trays' ? 'on' : ''}" data-do="shopTab" data-id="trays">Pizzabretter</button>
-          <button class="${shopTab === 'emotes' ? 'on' : ''}" data-do="shopTab" data-id="emotes">Emotes</button>
-          <button class="${shopTab === 'coins' ? 'on' : ''}" data-do="shopTab" data-id="coins">Münzen</button>
+          <button class="${shopTab === 'themes' ? 'on' : ''}" data-do="shopTab" data-id="themes">${tr('shop.tab.themes')}</button>
+          <button class="${shopTab === 'trays' ? 'on' : ''}" data-do="shopTab" data-id="trays">${tr('shop.tab.trays')}</button>
+          <button class="${shopTab === 'emotes' ? 'on' : ''}" data-do="shopTab" data-id="emotes">${tr('shop.tab.emotes')}</button>
+          <button class="${shopTab === 'coins' ? 'on' : ''}" data-do="shopTab" data-id="coins">${tr('shop.tab.coins')}</button>
         </div>
         ${body}
-        <p class="note center">Münzen gibt es für jede Runde: 10 fürs Mitspielen, 5 pro Pizza, 15 für den Sieg.</p>
+        <p class="note center">${tr('shop.coinsInfo')}</p>
       </div>`;
   }
 
@@ -733,30 +785,31 @@
   const roomParam = () => (new URLSearchParams(location.search).get('room') || '').toUpperCase();
   const privacyUrl = () => (SERVER ? CONFIG.publicUrl : '') + '/datenschutz.html';
   const legalLinks = () => `<div class="legal-links">
-      <a class="link small" href="${esc(privacyUrl())}" target="_blank" rel="noopener">Datenschutz</a>
-      <a class="link small" href="${esc(privacyUrl().replace('datenschutz', 'impressum'))}" target="_blank" rel="noopener">Impressum</a>
+      <a class="link small" href="${esc(privacyUrl())}" target="_blank" rel="noopener">${tr('legal.privacy')}</a>
+      <a class="link small" href="${esc(privacyUrl().replace('datenschutz', 'impressum'))}" target="_blank" rel="noopener">${tr('legal.imprint')}</a>
     </div>`;
 
   function renderJoining() {
-    app.innerHTML = `<div class="home joining"><img class="chef-big bob" src="img/chef-wave.png" alt=""><h2>Tisch wird gedeckt …</h2><div class="mm-dots"><i></i><i></i><i></i></div></div>`;
+    app.innerHTML = `<div class="home joining"><img class="chef-big bob" src="img/chef-wave.png" alt=""><h2>${tr('lobby.joining')}</h2><div class="mm-dots"><i></i><i></i><i></i></div></div>`;
   }
 
   function renderLoading() {
-    app.innerHTML = `<div class="home"><img class="logo-img" src="img/logo.png" alt="Pizza Panic"><p class="wait">Küche wird vorgeheizt …</p></div>`;
+    app.innerHTML = `<div class="home"><img class="logo-img" src="img/logo.png" alt="Pizza Panic"><p class="wait">${tr('loader.preheat')}</p></div>`;
   }
 
   function renderOnboarding() {
     app.innerHTML = `
       <div class="home">
         <img class="logo-img" src="img/logo.png" alt="Pizza Panic">
-        <p class="tagline">Belege deine Pizzen.<br><b>Bring die Konkurrenz in Panik.</b></p>
+        <p class="tagline">${tr('onboard.tagline')}</p>
         <div class="panel chef-panel">
           <img class="chef-peek" src="img/chef-wave.png" alt="">
-          <h2>Willkommen in der Küche!</h2>
-          <p class="note">Wie sollen dich die anderen nennen?</p>
-          <input id="name" maxlength="18" autocomplete="nickname" value="${esc(localStorage.getItem(LS_NAME) || '')}" placeholder="Dein Name">
-          <button class="btn primary big" data-do="onboard">Los geht's!</button>
+          <h2>${tr('onboard.welcome')}</h2>
+          <p class="note">${tr('onboard.ask')}</p>
+          <input id="name" maxlength="18" autocomplete="nickname" value="${esc(localStorage.getItem(LS_NAME) || '')}" placeholder="${esc(tr('onboard.placeholder'))}">
+          <button class="btn primary big" data-do="onboard">${tr('onboard.go')}</button>
         </div>
+        <button class="link" data-do="lang">🌐 ${esc(I18n.LANGS[I18n.lang()])}</button>
         ${legalLinks()}
       </div>`;
   }
@@ -771,42 +824,43 @@
           <div class="pc-top">
             <div class="pc-lv">${levelBadge(info.level)}</div>
             <div class="pc-main">
-              <div class="pc-name">${esc(profile.name)}${profile.supporter ? ' <span title="Unterstützer:in">⭐</span>' : ''} <button class="icon-btn" data-do="editName" aria-label="Namen ändern">✏️</button></div>
-              <div class="pc-title">${esc(info.title)}</div>
+              <div class="pc-name">${esc(profile.name)}${profile.supporter ? ` <span title="${esc(tr('profile.supporter'))}">⭐</span>` : ''} <button class="icon-btn" data-do="editName" aria-label="${esc(tr('profile.editName'))}">✏️</button></div>
+              <div class="pc-title">${esc(tr(info.titleKey))}</div>
               ${xpBar(info)}
             </div>
           </div>
-          <div class="pc-stats"><span><b>${profile.games}</b> Spiele</span><span><b>${profile.wins}</b> Siege</span><span class="spacer"></span>${coinChip()}</div>
+          <div class="pc-stats"><span>${tr('profile.games', { n: `<b>${profile.games}</b>` })}</span><span>${tr('profile.wins', { n: `<b>${profile.wins}</b>` })}</span><span class="spacer"></span>${coinChip()}</div>
         </div>
         ${room ? `
           <div class="invite">
-            <p>Du wurdest an Tisch <b>${esc(room)}</b> eingeladen!</p>
-            <button class="btn primary big" data-do="joinInvite">An den Tisch setzen</button>
+            <p>${tr('home.invited', { code: `<b>${esc(room)}</b>` })}</p>
+            <button class="btn primary big" data-do="joinInvite">${tr('home.joinInvite')}</button>
           </div>` : ''}
         ${!profile.tutorialDone ? `
           <div class="panel chef-panel tut-card">
             <img class="chef-peek" src="img/chef-point.png" alt="">
-            <h3>Neu hier?</h3>
-            <p>Spiel eine Übungsrunde mit <b>Pizzabäcker Luigi</b> – er erklärt dir alles Schritt für Schritt.</p>
-            <button class="btn primary" data-do="tutorial">🎓 Übungsrunde starten</button>
-            <button class="link" data-do="skipTutorial">Kenne ich schon</button>
+            <h3>${tr('home.tut.title')}</h3>
+            <p>${tr('home.tut.text')}</p>
+            <button class="btn primary" data-do="tutorial">🎓 ${tr('home.tut.start')}</button>
+            <button class="link" data-do="skipTutorial">${tr('home.tut.skip')}</button>
           </div>` : ''}
         <div class="menu-buttons">
           <button class="mbtn quick" data-do="quick">
-            <span class="mb-ico">⚡</span><span class="mb-txt"><b>Schnelles Spiel</b><small>Echte Spieler oder sofort gegen Bots</small></span>
+            <span class="mb-ico">⚡</span><span class="mb-txt"><b>${tr('quick.title')}</b><small>${tr('home.quick.sub')}</small></span>
           </button>
           <button class="mbtn friends" data-do="friends">
-            <span class="mb-ico">👥</span><span class="mb-txt"><b>Mit Freunden</b><small>Eigenen Tisch eröffnen oder beitreten</small></span>
+            <span class="mb-ico">👥</span><span class="mb-txt"><b>${tr('home.friends')}</b><small>${tr('home.friends.sub')}</small></span>
           </button>
           <button class="mbtn shopbtn" data-do="openShop">
-            <span class="mb-ico">🛒</span><span class="mb-txt"><b>Shop</b><small>Themen-Packs, Pizzabretter & Emotes</small></span>
+            <span class="mb-ico">🛒</span><span class="mb-txt"><b>${tr('shop.title')}</b><small>${tr('home.shop.sub')}</small></span>
           </button>
         </div>
         <div class="home-links">
-          <button class="link" data-do="rules">📖 Regeln</button>
-          ${profile.tutorialDone ? '<button class="link" data-do="tutorial">🎓 Tutorial</button>' : ''}
-          <button class="link" data-do="levels">🏅 Level</button>
-          <button class="link" data-do="audio">${Snd.music || Snd.sfx ? '🔊' : '🔇'} Ton</button>
+          <button class="link" data-do="rules">📖 ${tr('home.rules')}</button>
+          ${profile.tutorialDone ? `<button class="link" data-do="tutorial">🎓 ${tr('home.tutorial')}</button>` : ''}
+          <button class="link" data-do="levels">🏅 ${tr('home.levels')}</button>
+          <button class="link" data-do="audio">${Snd.music || Snd.sfx ? '🔊' : '🔇'} ${tr('home.audio')}</button>
+          <button class="link" data-do="lang">🌐 ${tr('lang.title')}</button>
         </div>
         ${legalLinks()}
       </div>`;
@@ -819,55 +873,71 @@
     app.innerHTML = `
       <div class="home matching">
         <img class="chef-big bob" src="img/chef-wave.png" alt="">
-        <h2>Suche Gegner …</h2>
-        <p class="mm-range">Level ${Math.max(1, lv - (st.range || 2))} – ${lv + (st.range || 2)}</p>
+        <h2>${tr('mm.searching')}</h2>
+        <p class="mm-range">${tr('mm.range', { from: Math.max(1, lv - (st.range || 2)), to: lv + (st.range || 2) })}</p>
         <div class="mm-dots"><i></i><i></i><i></i></div>
-        <p class="note">${st.near > 1 ? `${st.near - 1} Spieler:in${st.near > 2 ? 'nen' : ''} in deiner Nähe gefunden` : 'Noch niemand auf deinem Level online'} · ${secs}s</p>
-        ${st.botsIn > 0 ? `<p class="note">Falls niemand kommt, spielen in ${st.botsIn}s Bots mit dir.</p>` : ''}
-        <button class="btn big" data-do="cancelQuick">Abbrechen</button>
+        <p class="note">${st.near > 1 ? tr(st.near > 2 ? 'mm.found.other' : 'mm.found.one', { n: st.near - 1 }) : tr('mm.nobody')} · ${secs}s</p>
+        ${st.botsIn > 0 ? `<p class="note">${tr('mm.botsIn', { s: st.botsIn })}</p>` : ''}
+        <button class="btn big" data-do="cancelQuick">${tr('btn.cancel')}</button>
       </div>`;
   }
 
   function friendsSheet() {
-    openSheet(`<h2>👥 Mit Freunden spielen</h2>
-      <p class="note">Eröffne einen Tisch und schick den Code an deine Freunde.</p>
-      <button class="btn primary big" data-do="create">Neuen Tisch eröffnen</button>
-      <div class="or">oder mit Code beitreten</div>
+    openSheet(`<h2>👥 ${tr('friends.title')}</h2>
+      <p class="note">${tr('friends.note')}</p>
+      <button class="btn primary big" data-do="create">${tr('friends.create')}</button>
+      <div class="or">${tr('friends.or')}</div>
       <div class="join-row">
-        <input id="code" maxlength="4" placeholder="CODE" value="${esc(roomParam())}" autocapitalize="characters">
-        <button class="btn" data-do="join">Beitreten</button>
+        <input id="code" maxlength="4" placeholder="${esc(tr('friends.codePlaceholder'))}" value="${esc(roomParam())}" autocapitalize="characters">
+        <button class="btn" data-do="join">${tr('friends.join')}</button>
       </div>`);
   }
 
   function nameSheet() {
-    openSheet(`<h2>✏️ Name ändern</h2>
+    openSheet(`<h2>✏️ ${tr('profile.rename')}</h2>
       <input id="newName" maxlength="18" value="${esc(profile.name)}">
-      <div class="btn-row" style="margin-top:12px"><button class="btn primary" data-do="saveName">Speichern</button></div>
+      <div class="btn-row" style="margin-top:12px"><button class="btn primary" data-do="saveName">${tr('profile.save')}</button></div>
       <hr class="sep">
-      <h3>Profil löschen</h3>
-      <p class="note">Löscht deinen Namen, dein Level und deine Statistik endgültig.</p>
-      <button class="btn danger" data-do="deleteProfile">🗑️ Profil löschen</button>`);
+      <h3>${tr('profile.delete')}</h3>
+      <p class="note">${tr('profile.delete.note')}</p>
+      <button class="btn danger" data-do="deleteProfile">🗑️ ${tr('profile.delete')}</button>`);
   }
 
   async function deleteProfile() {
-    if (!confirm('Profil wirklich löschen? Dein Level und deine Statistik sind danach weg.')) return;
+    if (!confirm(tr('profile.delete.confirm'))) return;
     try {
       await post('/api/profile/delete', withProfile({}));
     } catch (e) {
-      if (!/Profil/.test(e.message)) return toast(e.message);
+      if (e.key !== 'err.profileMissing') return toast(e.message);
     }
     dropProfile();
     closeSheet();
-    toast('Dein Profil wurde gelöscht.');
+    toast(tr('profile.deleted'));
     render();
   }
 
   function levelsSheet() {
     const info = E.levelInfo(profile.xp);
-    openSheet(`<h2>🏅 Level & Titel</h2>
-      <p>Für jede Runde bekommst du XP: <b>20</b> fürs Mitspielen, <b>15</b> pro fertiger Pizza und <b>40+</b> für den Sieg.
-      Beim Schnellen Spiel triffst du Gegner auf deinem Level.</p>
-      <ul class="titles">${E.TITLES.map(([l, t]) => `<li class="${info.level >= l ? 'got' : ''}">${levelBadge(l)} ${esc(t)}</li>`).join('')}</ul>`);
+    openSheet(`<h2>🏅 ${tr('level.title')}</h2>
+      <p>${tr('level.text')}</p>
+      <ul class="titles">${E.TITLES.map(([l], i) => `<li class="${info.level >= l ? 'got' : ''}">${levelBadge(l)} ${esc(tr('title.' + i))}</li>`).join('')}</ul>`);
+  }
+
+  // ---------- Sprache wählen ----------
+
+  function langSheet() {
+    const cur = I18n.lang();
+    openSheet(`<h2>🌐 ${tr('lang.title')}</h2>
+      <div class="col">${Object.entries(I18n.LANGS).map(([code, name]) =>
+        `<button class="btn ${code === cur ? 'primary' : ''}" data-do="setLang" data-id="${code}" lang="${code}">${esc(name)}${code === cur ? ' ✓' : ''}</button>`).join('')}</div>`);
+  }
+
+  function setLang(code) {
+    I18n.setLang(code);
+    try { localStorage.setItem(LS_LANG, I18n.lang()); } catch { /* ignore */ }
+    applyLang();
+    closeSheet();
+    render(); // also redraws Luigi's bubble while the tutorial is running
   }
 
   function renderLobby() {
@@ -878,36 +948,34 @@
         <img class="logo-img small" src="img/logo.png" alt="Pizza Panic">
         <div class="panel">
           <div class="code-box">
-            <div class="code-label">Tisch-Code</div>
+            <div class="code-label">${tr('lobby.code')}</div>
             <div class="code">${esc(view.code)}</div>
-            <button class="btn" data-do="share">🔗 Einladung teilen</button>
+            <button class="btn" data-do="share">🔗 ${tr('lobby.share')}</button>
           </div>
-          <h3>Am Tisch (${n}/6)</h3>
+          <h3>${tr('lobby.atTable', { n })}</h3>
           <ul class="plist">
             ${view.players.map((p, i) => `
               <li>
                 <span class="dot ${p.connected ? 'on' : ''}"></span>
                 ${levelBadge(p.level || 1)}
-                <span class="pname">${esc(p.name)}${i === me() ? ' <small>(du)</small>' : ''}</span>
-                ${i === view.host ? '<span class="badge">👑 Gastgeber</span>' : ''}
+                <span class="pname">${esc(p.name)}${i === me() ? ` <small>${tr('lobby.you')}</small>` : ''}</span>
+                ${i === view.host ? `<span class="badge">👑 ${tr('lobby.host')}</span>` : ''}
                 ${p.isBot ? '<span class="badge">🤖</span>' : ''}
-                ${isHost && i !== me() ? `<button class="x" data-do="kick" data-i="${i}" aria-label="Entfernen">✕</button>` : ''}
+                ${isHost && i !== me() ? `<button class="x" data-do="kick" data-i="${i}" aria-label="${esc(tr('lobby.kick'))}">✕</button>` : ''}
               </li>`).join('')}
           </ul>
-          <p class="note">${n <= 3
-            ? '2–3 Spieler:innen: <b>4 Pizzen</b> fertigstellen.'
-            : '4–6 Spieler:innen: <b>3 Pizzen</b> fertigstellen.'}</p>
+          <p class="note">${n <= 3 ? tr('lobby.goal.small') : tr('lobby.goal.big')}</p>
           ${themePickerHTML(isHost)}
           ${isHost ? `
             <div class="btn-row">
-              <button class="btn" data-do="addBot" ${n >= 6 ? 'disabled' : ''}>🤖 Bot dazu</button>
-              <button class="btn primary" data-do="start" ${n < 2 ? 'disabled' : ''}>Spiel starten</button>
-            </div>` : '<p class="wait">Warte, bis der Gastgeber das Spiel startet …</p>'}
+              <button class="btn" data-do="addBot" ${n >= 6 ? 'disabled' : ''}>🤖 ${tr('lobby.addBot')}</button>
+              <button class="btn primary" data-do="start" ${n < 2 ? 'disabled' : ''}>${tr('lobby.start')}</button>
+            </div>` : `<p class="wait">${tr('lobby.waitHost')}</p>`}
         </div>
         <div class="btn-row center">
-          <button class="link" data-do="rules">📖 Regeln</button>
-          <button class="link" data-do="menu">📋 Speisekarte</button>
-          <button class="link danger" data-do="leave">Tisch verlassen</button>
+          <button class="link" data-do="rules">📖 ${tr('home.rules')}</button>
+          <button class="link" data-do="menu">📋 ${tr('lobby.menu')}</button>
+          <button class="link danger" data-do="leave">${tr('lobby.leave')}</button>
         </div>
       </div>`;
   }
@@ -916,10 +984,10 @@
   function themePickerHTML(isHost) {
     const cur = view.theme || null;
     if (!isHost) {
-      return cur ? `<div class="theme-now">${E.THEMES[cur].icon} Thema: <b>${esc(E.THEMES[cur].name)}</b></div>` : '';
+      return cur ? `<div class="theme-now">${E.THEMES[cur].icon} ${tr('lobby.themeNow', { name: `<b>${esc(themeName(cur))}</b>` })}</div>` : '';
     }
-    const chips = [{ id: '', icon: '🍕', name: 'Klassisch' }].concat(Object.entries(E.THEMES).map(([id, t]) => ({ id, ...t })));
-    return `<h3>Thema</h3>
+    const chips = [{ id: '', icon: '🍕', name: tr('theme.classic') }].concat(Object.entries(E.THEMES).map(([id, t]) => ({ id, ...t, name: themeName(id) })));
+    return `<h3>${tr('quick.theme')}</h3>
       <div class="theme-chips">${chips.map(t => {
         const owned = !t.id || S.ownsTheme(profile, t.id);
         const on = (cur || '') === t.id;
@@ -931,7 +999,7 @@
 
   function miniCard(c, size) {
     const d = T[c.t];
-    return `<div class="mc ${d.kind}" title="${esc(d.name)}">${A.cardArt(c.t, size)}</div>`;
+    return `<div class="mc ${d.kind}" title="${esc(ingName(c.t))}">${A.cardArt(c.t, size)}</div>`;
   }
 
   // Ids of cards that were on a tray when the table was last drawn (for the pop-in animation).
@@ -958,9 +1026,9 @@
       </div>`;
     });
     if (tg.has(`${pi}:new`)) {
-      stacks.push(`<div class="stack new target" data-do="stack" data-p="${pi}" data-s="new"><div class="stack-cards">＋</div><div class="stack-label">Neue Pizza</div></div>`);
+      stacks.push(`<div class="stack new target" data-do="stack" data-p="${pi}" data-s="new"><div class="stack-cards">＋</div><div class="stack-label">${tr('game.newPizza')}</div></div>`);
     }
-    if (!stacks.length) stacks.push('<div class="empty-tray">Leeres Pizzabrett</div>');
+    if (!stacks.length) stacks.push(`<div class="empty-tray">${tr('game.emptyTray')}</div>`);
     const skin = (view.players[pi] && view.players[pi].tray) || 'classic';
     return `<div class="tray skin-${esc(skin)}" data-tray="${pi}">${stacks.join('')}</div>`;
   }
@@ -980,10 +1048,11 @@
     if (g.winner != null) return '';
     if (myTurn()) {
       const slots = [0, 1, 2].map(i => `<i class="${i < g.played ? 'used' : ''}"></i>`).join('');
-      return `<div class="turn-strip mine"><span class="ts-icon">🍳</span><b>Du bist dran!</b><span class="ts-sub">${3 - g.played > 0 ? `noch ${3 - g.played} Karte${3 - g.played > 1 ? 'n' : ''}` : 'fertig'}</span><span class="slots">${slots}</span></div>`;
+      const left = 3 - g.played;
+      return `<div class="turn-strip mine"><span class="ts-icon">🍳</span><b>${tr('turn.yours')}</b><span class="ts-sub">${left > 0 ? tr(left > 1 ? 'turn.cardsLeft.other' : 'turn.cardsLeft.one', { n: left }) : tr('turn.done')}</span><span class="slots">${slots}</span></div>`;
     }
     const cur = g.players[g.current];
-    return `<div class="turn-strip other"><span class="ts-icon">⏳</span><b>${esc(cur.name)}</b>&nbsp;ist dran<span class="think"><i></i><i></i><i></i></span>
+    return `<div class="turn-strip other"><span class="ts-icon">⏳</span>${tr('turn.strip.other', { name: `<b>${esc(cur.name)}</b>` })}<span class="think"><i></i><i></i><i></i></span>
       <span class="slots">${[0, 1, 2].map(i => `<i class="${i < g.played ? 'used' : ''}"></i>`).join('')}</span></div>`;
   }
 
@@ -995,7 +1064,7 @@
     return `<button class="card ${d.kind} ${sel ? 'sel' : ''} ${k >= 0 ? 'deal-in' : ''}" ${k >= 0 ? `style="animation-delay:${k * 0.12}s"` : ''} data-do="card" data-id="${c.id}" data-t="${c.t}">
       <span class="corner">${twin ? '👯' : ''}</span>
       <span class="art">${A.cardArt(c.t, d.kind === 'act' ? 66 : [0, 66, 46, 34, 28, 24][d.layers.length])}</span>
-      <span class="cname">${esc(d.name)}</span>
+      <span class="cname">${esc(ingName(c.t))}</span>
     </button>`;
   }
 
@@ -1008,7 +1077,7 @@
       const layers = E.RECIPES[r].layers;
       const done = have === layers.length;
       return `<div class="order ${done ? 'done' : ''}">
-        <div class="order-name">${done ? '✅' : `${have}/${layers.length}`} ${esc(E.RECIPES[r].name)}</div>
+        <div class="order-name">${done ? '✅' : `${have}/${layers.length}`} ${esc(recipeName(r))}</div>
         <div class="order-row">${layers.map((l, i) =>
           `<span class="oi ${i < have ? 'got' : ''}">${A.icon(l, 22)}${i < have ? '<b>✓</b>' : ''}</span>`).join('')}</div>
       </div>`;
@@ -1021,34 +1090,35 @@
     if (g.winner != null) return '';
     if (!myTurn()) {
       const sel = ui.sel && findCard(ui.sel);
-      const extra = sel && T[sel.t].desc ? `<div class="sub">${esc(T[sel.t].name)}: ${esc(T[sel.t].desc)}</div>` : '';
-      return `<div class="hint-text">⏳ <b>${esc(cur.name)}</b> ist am Zug${g.pending ? ' und wühlt im Müll' : ''} …</div>${extra}`;
+      const extra = sel && T[sel.t].desc ? `<div class="sub">${esc(ingName(sel.t))}: ${esc(actDesc(sel.t))}</div>` : '';
+      return `<div class="hint-text">⏳ ${tr(g.pending ? 'hint.otherDigging' : 'hint.other', { name: `<b>${esc(cur.name)}</b>` })}</div>${extra}`;
     }
-    const played = `<span class="pill">${g.played}/3 gespielt</span>`;
-    const cancel = '<button class="btn ghost" data-do="cancel">Abbrechen</button>';
+    const played = `<span class="pill">${tr('hint.played', { n: g.played })}</span>`;
+    const cancel = `<button class="btn ghost" data-do="cancel">${tr('btn.cancel')}</button>`;
     if (g.pending) {
-      return `<div class="hint-text">🗑️ Wähle eine Zutat aus dem Müll${ui.dig ? ' – und tippe dann auf ein markiertes Feld' : ''}.</div>
-        <div class="btn-row"><button class="btn" data-do="digOpen">Müll durchsuchen</button></div>`;
+      return `<div class="hint-text">🗑️ ${tr(ui.dig ? 'hint.digPicked' : 'hint.dig')}</div>
+        <div class="btn-row"><button class="btn" data-do="digOpen">${tr('hint.digOpen')}</button></div>`;
     }
-    if (ui.mode === 'burn') return `<div class="hint-text">🔥 Tippe auf die Pizza, die anbrennen soll.</div><div class="btn-row">${cancel}</div>`;
-    if (ui.mode === 'stealSrc') return `<div class="hint-text">✋ Was willst du klauen? Tippe auf eine markierte Pizza.</div><div class="btn-row">${cancel}</div>`;
-    if (ui.mode === 'stealDst') return `<div class="hint-text">✋ Wohin damit? Tippe auf ein markiertes Feld (anderes Brett).</div><div class="btn-row">${cancel}</div>`;
+    if (ui.mode === 'burn') return `<div class="hint-text">🔥 ${tr('hint.burn')}</div><div class="btn-row">${cancel}</div>`;
+    if (ui.mode === 'stealSrc') return `<div class="hint-text">✋ ${tr('hint.stealSrc')}</div><div class="btn-row">${cancel}</div>`;
+    if (ui.mode === 'stealDst') return `<div class="hint-text">✋ ${tr('hint.stealDst')}</div><div class="btn-row">${cancel}</div>`;
 
     const c = ui.sel && findCard(ui.sel);
     if (!c) {
       const canEnd = g.played > 0 || !myHand().length;
-      return `<div class="hint-text">🍳 Du bist dran! Spiele 1–3 Karten. ${played}</div>
-        <div class="btn-row"><button class="btn ${canEnd ? 'primary' : ''}" data-do="end" ${canEnd ? '' : 'disabled'}>Zug beenden</button></div>`;
+      return `<div class="hint-text">🍳 ${tr('hint.yourTurn')} ${played}</div>
+        <div class="btn-row"><button class="btn ${canEnd ? 'primary' : ''}" data-do="end" ${canEnd ? '' : 'disabled'}>${tr('hint.end')}</button></div>`;
     }
     const d = T[c.t];
-    const pairBtn = canPair(c) ? '<button class="btn" data-do="pair">👯 Paar → Karte ziehen</button>' : '';
+    const pairBtn = canPair(c) ? `<button class="btn" data-do="pair">👯 ${tr('hint.pair')}</button>` : '';
+    const discardBtn = `<button class="btn" data-do="discard">🗑️ ${tr('hint.discard')}</button>`;
     if (d.kind === 'ing') {
       const has = targets().size > 0;
-      return `<div class="hint-text">${has ? `<b>${esc(d.name)}</b>: Tippe auf ein markiertes Feld auf deinem Brett.` : `<b>${esc(d.name)}</b> passt gerade nirgends hin.`} ${played}</div>
-        <div class="btn-row"><button class="btn" data-do="discard">🗑️ Abwerfen</button>${pairBtn}${cancel}</div>`;
+      return `<div class="hint-text">${tr(has ? 'hint.place' : 'hint.noFit', { card: `<b>${esc(ingName(c.t))}</b>` })} ${played}</div>
+        <div class="btn-row">${discardBtn}${pairBtn}${cancel}</div>`;
     }
-    return `<div class="hint-text"><b>${A.ACTIONS[c.t]} ${esc(d.name)}</b>: ${esc(d.desc)} ${played}</div>
-      <div class="btn-row"><button class="btn primary" data-do="play">Ausspielen</button><button class="btn" data-do="discard">🗑️ Abwerfen</button>${pairBtn}${cancel}</div>`;
+    return `<div class="hint-text"><b>${A.ACTIONS[c.t]} ${esc(ingName(c.t))}</b>: ${esc(actDesc(c.t))} ${played}</div>
+      <div class="btn-row"><button class="btn primary" data-do="play">${tr('hint.play')}</button>${discardBtn}${pairBtn}${cancel}</div>`;
   }
 
   function renderGame() {
@@ -1066,11 +1136,11 @@
     app.innerHTML = `
       <div class="game">
         <header class="topbar">
-          <button class="pile deck" data-do="noop" title="Nachziehstapel"><span class="back"></span><b>${g.deckCount}</b></button>
-          <button class="pile trash" data-do="trash" title="Müll">${top ? miniCard(top, 20) : '<span class="empty">🗑️</span>'}<b>${g.trash.length}</b></button>
+          <button class="pile deck" data-do="noop" title="${esc(tr('game.deck'))}"><span class="back"></span><b>${g.deckCount}</b></button>
+          <button class="pile trash" data-do="trash" title="${esc(tr('game.trash'))}">${top ? miniCard(top, 20) : '<span class="empty">🗑️</span>'}<b>${g.trash.length}</b></button>
           <div class="spacer"></div>
-          ${view.kind !== 'tutorial' ? '<button class="tbtn" data-do="emotes" aria-label="Emotes">💬</button>' : ''}
-          <button class="tbtn" data-do="menu">📋 Menü</button>
+          ${view.kind !== 'tutorial' ? `<button class="tbtn" data-do="emotes" aria-label="${esc(tr('game.emotes'))}">💬</button>` : ''}
+          <button class="tbtn" data-do="menu">📋 ${tr('game.menu')}</button>
           <button class="tbtn" data-do="more">⋯</button>
         </header>
 
@@ -1087,18 +1157,18 @@
             </div>`).join('')}
         </section>
 
-        <button class="ticker" data-do="log">${recent.map((l, k) => `<div class="${k === 0 && l.n > lastLogN ? 'fresh' : ''}">${esc(l.text)}</div>`).join('')}</button>
+        <button class="ticker" data-do="log">${recent.map((l, k) => `<div class="${k === 0 && l.n > lastLogN ? 'fresh' : ''}">${logText(l, true)}</div>`).join('')}</button>
 
         <section class="mytray ${myTurn() ? 'active' : ''}" data-player="${me()}">
-          <div class="my-head"><b>Deine Bestellung</b><span>✓ ${E.completedCount(mine.tray, R)}/${R.length} Pizzen</span></div>
+          <div class="my-head"><b>${tr('game.myOrder')}</b><span>${tr('game.pizzasDone', { done: E.completedCount(mine.tray, R), total: R.length })}</span></div>
           ${menuStripHTML(mine.tray, R)}
-          <div class="my-head sub"><b>Dein Pizzabrett</b></div>
+          <div class="my-head sub"><b>${tr('game.myTray')}</b></div>
           ${trayHTML(mine, me(), 30, tg)}
         </section>
 
         <section class="hint">${hintHTML()}</section>
 
-        <section class="hand ${myTurn() ? 'my-turn' : 'waiting'}">${(() => { const deal = newHandIds(); return myHand().map(c => handCard(c, deal)).join(''); })() || '<div class="empty-hand">Keine Karten auf der Hand</div>'}</section>
+        <section class="hand ${myTurn() ? 'my-turn' : 'waiting'}">${(() => { const deal = newHandIds(); return myHand().map(c => handCard(c, deal)).join(''); })() || `<div class="empty-hand">${tr('game.emptyHand')}</div>`}</section>
 
         ${g.winner != null ? resultHTML(g) : ''}
       </div>`;
@@ -1115,9 +1185,9 @@
   function emoteSheet() {
     const list = profile ? S.ownedEmotes(profile) : S.EMOTES.filter(e => e.pack === 'free');
     const locked = S.EMOTES.length - list.length;
-    openSheet(`<h2>💬 Emotes</h2>
-      <div class="emote-grid">${list.map(e => `<button class="emote-btn" data-do="sendEmote" data-id="${e.id}"><span>${e.icon}</span>${esc(e.text)}</button>`).join('')}</div>
-      ${locked ? `<p class="note center">${locked} weitere Emotes gibt es im 🛒 Shop.</p>` : ''}`, 'ctx');
+    openSheet(`<h2>💬 ${tr('game.emotes')}</h2>
+      <div class="emote-grid">${list.map(e => `<button class="emote-btn" data-do="sendEmote" data-id="${e.id}"><span>${e.icon}</span>${esc(tr('emote.' + e.id))}</button>`).join('')}</div>
+      ${locked ? `<p class="note center">${tr(locked > 1 ? 'game.moreEmotes.other' : 'game.moreEmotes.one', { n: locked })}</p>` : ''}`, 'ctx');
   }
 
   // Bubbles float over the panel of whoever sent the emote; each emote is shown once.
@@ -1132,7 +1202,7 @@
       const r = panel.getBoundingClientRect();
       const el = document.createElement('div');
       el.className = 'emote-bubble';
-      el.innerHTML = `<span>${e.icon}</span>${esc(e.text)}`;
+      el.innerHTML = `<span>${e.icon}</span>${esc(tr('emote.' + e.id))}`;
       el.style.left = `${Math.min(window.innerWidth - 170, Math.max(8, r.left + 12))}px`;
       el.style.top = `${Math.max(8, r.top + 4)}px`;
       document.body.appendChild(el);
@@ -1147,37 +1217,37 @@
     const levelUp = r && r.after.level > r.before.level;
     let buttons;
     if (view.kind === 'tutorial') {
-      buttons = '<button class="btn primary big" data-do="home">Zum Hauptmenü</button>';
+      buttons = `<button class="btn primary big" data-do="home">${tr('result.toMenu')}</button>`;
     } else if (view.kind === 'quick') {
-      buttons = `<button class="btn primary big" data-do="again">⚡ Nächstes Spiel</button>
-        <button class="link" data-do="home">Hauptmenü</button>`;
+      buttons = `<button class="btn primary big" data-do="again">⚡ ${tr('result.next')}</button>
+        <button class="link" data-do="home">${tr('result.menu')}</button>`;
     } else if (view.kind === 'bots') {
-      buttons = `<button class="btn primary big" data-do="againBots">🤖 Nochmal gegen Bots</button>
-        <button class="link" data-do="home">Hauptmenü</button>`;
+      buttons = `<button class="btn primary big" data-do="againBots">🤖 ${tr('result.againBots')}</button>
+        <button class="link" data-do="home">${tr('result.menu')}</button>`;
     } else {
-      buttons = `${view.host === me() ? '<button class="btn primary big" data-do="restart">Nochmal spielen</button>' : '<p class="wait">Warte auf den Gastgeber …</p>'}
-        <button class="link" data-do="home">Hauptmenü</button>`;
+      buttons = `${view.host === me() ? `<button class="btn primary big" data-do="restart">${tr('result.again')}</button>` : `<p class="wait">${tr('result.waitHost')}</p>`}
+        <button class="link" data-do="home">${tr('result.menu')}</button>`;
     }
     return `
       <div class="winner">
         <div class="winner-card">
           <img class="chef-result" src="img/${won ? 'chef-cheer' : 'chef-thumbs'}.png" alt="">
-          <h2>${won ? 'Du gewinnst!' : `${esc(g.players[g.winner].name)} gewinnt!`}</h2>
-          <p>${view.kind === 'tutorial' ? 'Übungsrunde geschafft – jetzt bist du bereit für echte Gegner!'
-            : won ? 'Alle Pizzen fertig – du bist Pizzaiolo/Pizzaiola!' : 'Ab in die Küche, nächste Runde!'}</p>
+          <h2>${won ? tr('result.youWin') : tr('result.otherWins', { name: esc(g.players[g.winner].name) })}</h2>
+          <p>${view.kind === 'tutorial' ? tr('result.tutDone')
+            : won ? tr('result.wonText') : tr('result.lostText')}</p>
           ${r ? `
             <div class="xp-gain">
               <div class="xp-plus">+${r.xp} XP</div>
-              <div class="xp-detail">20 fürs Mitspielen · ${r.burgers} × 15 für Pizzen${r.won ? ' · Sieg-Bonus' : ''}${r.bonus ? ` · ${r.bonus} Tutorial-Bonus` : ''}</div>
+              <div class="xp-detail">${tr('result.xp.base')} · ${tr('result.xp.pizzas', { n: r.burgers })}${r.won ? ` · ${tr('result.xp.win')}` : ''}${r.bonus ? ` · ${tr('result.xp.tut', { n: r.bonus })}` : ''}</div>
               <div class="xp-row">${levelBadge(r.after.level)}
                 <div class="xpbar big"><i data-from="${levelUp ? 0 : Math.round(r.before.into / r.before.need * 100)}" data-to="${Math.round(r.after.into / r.after.need * 100)}"></i><span>${r.after.into} / ${r.after.need} XP</span></div>
               </div>
-              ${levelUp ? `<div class="level-up">⭐ Level ${r.after.level} erreicht! <small>${esc(r.after.title)}</small></div>
-                ${S.unlockedBetween(r.before.level, r.after.level).map(t => `<div class="unlock">${traySwatch(t.id)}<span><b>${esc(t.name)}</b>${t.reward ? 'geschenkt – im Shop auswählen!' : 'jetzt im Shop kaufbar'}</span></div>`).join('')}` : ''}
-              <div class="coin-gain">+${r.coins} 🪙 Münzen${r.doubled ? ' <span class="pill ok">×2</span>' : ''}</div>
+              ${levelUp ? `<div class="level-up">⭐ ${tr('result.levelUp', { level: r.after.level })} <small>${esc(r.after.titleKey ? tr(r.after.titleKey) : r.after.title)}</small></div>
+                ${S.unlockedBetween(r.before.level, r.after.level).map(t => `<div class="unlock">${traySwatch(t.id)}<span><b>${esc(tr('tray.' + t.id))}</b>${t.reward ? tr('result.unlock.gift') : tr('result.unlock.buy')}</span></div>`).join('')}` : ''}
+              <div class="coin-gain">${tr('result.coins', { n: r.coins })}${r.doubled ? ' <span class="pill ok">×2</span>' : ''}</div>
             </div>
             ${!r.doubled && profile && (profile.supporter || (isNative && (profile.doublesToday || 0) < S.DOUBLES_PER_DAY)) ? `
-              <button class="btn big double-btn" data-do="double">${profile && profile.supporter ? '⭐ Belohnung verdoppeln' : '▶️ Video ansehen: Belohnung ×2'}</button>` : ''}` : ''}
+              <button class="btn big double-btn" data-do="double">${profile && profile.supporter ? `⭐ ${tr('result.double')}` : `▶️ ${tr('result.doubleVideo')}`}</button>` : ''}` : ''}
           ${buttons}
         </div>
       </div>`;
@@ -1209,15 +1279,8 @@
   let fxSeen = null; // { code, n }: newest log entry already animated
   let fxHidden = [];
 
-  // Accusative with article, for "… klaut dir den Mozzarella".
-  const ACC = {
-    sauce: 'die Tomatensoße', mozzarella: 'den Mozzarella', salami: 'die Salami', ham: 'den Schinken', mushroom: 'die Pilze',
-    pepper: 'die Paprika', basil: 'das Basilikum', sauceSalami: 'Soße + Salami', hamMushroom: 'Schinken + Pilze',
-    fullMargherita: 'die fertige Margherita', fullFunghi: 'die fertige Prosciutto e Funghi', fullSpeciale: 'die fertige Speciale',
-    pineapple: 'die Ananas', chicken: 'das Hähnchen', peperoni: 'die Peperoni', onion: 'die roten Zwiebeln',
-    zucchini: 'die Zucchini', olive: 'die Oliven', tuna: 'den Thunfisch', shrimp: 'die Garnelen',
-    pear: 'die Birne', gorgonzola: 'den Gorgonzola',
-  };
+  // Accusative with article ('acc.<type>'), for "… klaut dir den Mozzarella"; null if there is none.
+  const accOrNull = type => (type && I18n.has('acc.' + type) ? accOf(type) : null);
 
   function snapshot() {
     const snap = { stacks: {}, trays: {}, players: {} };
@@ -1252,9 +1315,10 @@
   }
 
   const rectOf = el => el && el.getBoundingClientRect();
-  const nameOf = p => (p === me() ? 'Du' : game().players[p].name);
-  const trayOf = p => (p === me() ? 'Dein Brett' : `Brett von ${game().players[p].name}`);
-  const verb = (p, mine, theirs) => (p === me() ? mine : theirs);
+  const nameOf = p => game().players[p].name;
+  const trayOf = p => (p === me() ? tr('fx.tray.mine') : tr('fx.tray.of', { name: nameOf(p) }));
+  // Whole sentences per person: key + '.me' when I did it, key + '.other' (with {name}) otherwise.
+  const byLine = (key, by, p) => tr(key + (by === me() ? '.me' : '.other'), { name: nameOf(by), ...(p || {}) });
 
   function clearFx() {
     fxLayer.getAnimations({ subtree: true }).forEach(a => a.cancel());
@@ -1346,9 +1410,9 @@
     setTimeout(clearFx, FX_MS + 300);
 
     if (fx.k === 'steal') {
-      const what = fx.whole ? fx.label : ACC[fx.cards[0]] || fx.label;
-      banner(victimIsMe ? '✋ Du wurdest beklaut!' : fx.by === me() ? '✋ Geklaut!' : '✋ Klau-Alarm!',
-        `${nameOf(fx.by)} ${verb(fx.by, 'klaust', 'klaut')} ${what}`, `${trayOf(fx.from.player)} ➜ ${trayOf(fx.to.player)}`, victimIsMe);
+      const what = fx.whole ? labelText(fx.label) : accOrNull(fx.cards[0]) || labelText(fx.label);
+      banner(tr(victimIsMe ? 'fx.steal.title.victim' : fx.by === me() ? 'fx.steal.title.me' : 'fx.steal.title.other'),
+        byLine('fx.steal', fx.by, { what }), `${trayOf(fx.from.player)} ➜ ${trayOf(fx.to.player)}`, victimIsMe);
       shake(fx.from.player);
       if (calm) return;
       const src = snap.stacks[`${fx.from.player}:${fx.from.stack}`];
@@ -1363,9 +1427,9 @@
     }
 
     if (fx.k === 'burn') {
-      const what = fx.cards.length === 1 ? ACC[fx.cards[0]] || fx.label : fx.label;
-      banner(victimIsMe ? '🔥 Deine Pizza brennt an!' : fx.by === me() ? '🔥 Angebrannt!' : '🔥 Es brennt!',
-        `${nameOf(fx.by)} ${verb(fx.by, 'lässt', 'lässt')} ${what} anbrennen`, `${trayOf(fx.from.player)} ➜ Müll`, victimIsMe);
+      const what = (fx.cards.length === 1 && accOrNull(fx.cards[0])) || labelText(fx.label);
+      banner(tr(victimIsMe ? 'fx.burn.title.victim' : fx.by === me() ? 'fx.burn.title.me' : 'fx.burn.title.other'),
+        byLine('fx.burn', fx.by, { what }), `${trayOf(fx.from.player)} ➜ ${tr('fx.trash')}`, victimIsMe);
       shake(fx.from.player);
       if (calm) return;
       const src = snap.stacks[`${fx.from.player}:${fx.from.stack}`];
@@ -1384,8 +1448,8 @@
     if (fx.k === 'swap') {
       const n = g.players.length;
       const mineFrom = fx.dir === 'next' ? (me() - 1 + n) % n : (me() + 1) % n;
-      banner('🔄 Falscher Tisch!', `${nameOf(fx.by)} ${verb(fx.by, 'lässt', 'lässt')} alle Pizzabretter weiterwandern`,
-        mineFrom === me() ? '' : `Du hast jetzt das Brett von ${g.players[mineFrom].name}`, false);
+      banner(tr('fx.swap.title'), byLine('fx.swap', fx.by),
+        mineFrom === me() ? '' : tr('fx.swap.route', { name: g.players[mineFrom].name }), false);
       if (calm) return;
       for (let i = 0; i < n; i++) {
         const from = snap.trays[i];
@@ -1399,7 +1463,7 @@
     }
 
     if (fx.k === 'dig') {
-      banner('🗑️ Mülltaucher!', `${nameOf(fx.by)} ${verb(fx.by, 'fischst', 'fischt')} ${ACC[fx.cards[0]] || ''} aus dem Müll`, `Müll ➜ ${trayOf(fx.by)}`, false);
+      banner(tr('fx.dig.title'), byLine('fx.dig', fx.by, { what: accOrNull(fx.cards[0]) || '' }), `${tr('fx.trash')} ➜ ${trayOf(fx.by)}`, false);
       if (calm || !snap.trash) return;
       const dstEl = app.querySelector(stackSel(fx.to.player, fx.to.stack));
       const target = dstEl && [...dstEl.querySelectorAll('.mc')].pop();
@@ -1412,9 +1476,10 @@
     }
 
     if (fx.k === 'pair') {
-      banner(victimIsMe ? '👯 Dir wurde eine Karte geklaut!' : '👯 Paar!',
-        `${nameOf(fx.by)} ${verb(fx.by, 'wirfst', 'wirft')} zwei Mal ${T[fx.cards[0]].name} ab`,
-        `… und ${verb(fx.by, 'ziehst', 'zieht')} blind eine Karte von ${fx.victim === me() ? 'dir' : g.players[fx.victim].name}`, victimIsMe);
+      banner(tr(victimIsMe ? 'fx.pair.title.victim' : 'fx.pair.title'),
+        byLine('fx.pair', fx.by, { card: ingName(fx.cards[0]) }),
+        fx.by === me() ? tr('fx.pair.route.me', { name: nameOf(fx.victim) })
+          : tr(fx.victim === me() ? 'fx.pair.route.fromYou' : 'fx.pair.route.other', { name: nameOf(fx.victim) }), victimIsMe);
       if (calm) return;
       const from = fx.victim === me() ? snap.hand : snap.players[fx.victim];
       const to = fx.by === me() ? rectOf(app.querySelector('.hand')) : rectOf(app.querySelector(`[data-player="${fx.by}"]`));
@@ -1442,17 +1507,20 @@
   const stackSel = (p, s) => `.stack[data-p="${p}"][data-s="${s}"]`;
 
   // "Play this card on that spot": highlights the card first, then the one spot it may go to.
-  function placeStep(card, spot, pick, put, done) {
+  // Texts are dictionary keys: `${key}.pick` (tap the card) and `${key}.put` (tap the spot).
+  function placeStep(card, spot, key, done) {
+    const pick = key + '.pick', put = key + '.put';
     return {
       when: () => myTurn(), done, skip: () => myTurn() && !handHasType(card),
       cards: [card], buttons: ['cancel'],
       spots: k => k === `${me()}:${spot()}`,
       target: () => (selType() === card ? stackSel(me(), spot()) : `.hand .card[data-t="${card}"]`),
-      text: () => (selType() === card ? put : pick),
+      text: () => tr(selType() === card ? put : pick),
     };
   }
 
   // Action card in three moves: tap the card, tap "Ausspielen", tap the highlighted pizza(s).
+  // texts = dictionary keys, one per stage.
   function actionStep(card, src, texts, done, dst) {
     const stage = () => (selType() !== card ? 0 : !ui.mode ? 1 : ui.mode === 'stealDst' ? 3 : 2);
     return {
@@ -1461,7 +1529,7 @@
       spots: k => (ui.mode === 'stealDst' ? k === dst() : k === src()),
       target: () => [`.hand .card[data-t="${card}"]`, '[data-do="play"]', `.stack[data-p="${src().replace(':', '"][data-s="')}"]`,
         dst ? `.stack[data-p="${dst().replace(':', '"][data-s="')}"]` : ''][stage()],
-      text: () => texts[stage()],
+      text: () => tr(texts[stage()]),
     };
   }
 
@@ -1469,84 +1537,55 @@
   // While a step is shown only its `cards`, `spots` and `buttons` work, so the round runs exactly as explained.
   // The hands are fixed on the server (TUTORIAL_RIG / TUTORIAL_BOT_RIG), test/tutorial.js checks the same moves.
   const TUT = [
-    { chef: 'wave', next: true, text: 'Benvenuto in meiner Pizzeria! Ich bin <b>Luigi</b> und spiele diese Übungsrunde mit dir. Ziel des Spiels: Wer zuerst <b>alle 4 Pizzen seiner Bestellung</b> fertig hat, gewinnt.' },
-    { chef: 'point', target: '.menu-strip', next: true, text: 'Das ist <b>deine Bestellung</b>. Jede Zeile ist eine Pizza. Du belegst sie <b>genau in dieser Reihenfolge</b>: links kommt immer die <b>Tomatensoße</b> auf den Teig, ganz rechts zum Schluss der <b>Mozzarella</b>.' },
-    { chef: 'point', target: '.mytray .tray', next: true, text: 'Das ist <b>dein Pizzabrett</b>. Hier belegst du deine Pizzen Karte für Karte. Jede Pizza bekommt einen <b>eigenen Stapel</b>.' },
-    placeStep('sauce', () => 'new',
-      'Unten liegen deine <b>3 Handkarten</b>. Jede Pizza fängt mit <b>Tomatensoße</b> an. Tippe auf die Tomatensoße.',
-      'Leuchtende Felder zeigen, wo eine Karte hinpasst. Tippe auf <b>„Neue Pizza“</b>. Damit fängst du deine Margherita an.',
+    { chef: 'wave', next: true, text: () => tr('tut.welcome') },
+    { chef: 'point', target: '.menu-strip', next: true, text: () => tr('tut.order') },
+    { chef: 'point', target: '.mytray .tray', next: true, text: () => tr('tut.tray') },
+    placeStep('sauce', () => 'new', 'tut.sauce1',
       () => mine('sauce') >= 0 || mine('sauce,basil') >= 0),
-    placeStep('basil', () => mine('sauce'),
-      'Klasse! Pro Zug darfst du <b>bis zu 3 Karten</b> spielen, eine ist schon weg. Bei der Margherita kommt nach der Soße das <b>Basilikum</b>. Tippe auf das Basilikum.',
-      'Jetzt tippst du auf deinen <b>Stapel mit der Soße</b>. Das Basilikum kommt obendrauf.',
+    placeStep('basil', () => mine('sauce'), 'tut.basil',
       () => mine('sauce,basil') >= 0),
-    placeStep('sauce', () => 'new',
-      'Deine 3. Karte ist noch eine <b>Tomatensoße</b>. Damit fängst du gleich die nächste Pizza an. Tippe darauf.',
-      'Die Soße bekommt einen <b>neuen Stapel</b>, denn sie gehört zu einer anderen Pizza. Tippe auf <b>„Neue Pizza“</b>.',
+    placeStep('sauce', () => 'new', 'tut.sauce2',
       () => mine('sauce') >= 0 || !myTurn()),
-    { chef: 'thumbs', target: '.opponents', next: true, text: 'Das waren 3 Karten, also ist dein Zug vorbei. Du ziehst <b>automatisch wieder auf 3 Karten</b> nach. Jetzt bin ich dran! Oben siehst du <b>mein Brett</b>, darunter im Laufband steht, was ich gemacht habe.' },
+    { chef: 'thumbs', target: '.opponents', next: true, text: () => tr('tut.turnOver') },
     { chef: 'point', target: '.opponents', next: true, when: () => myTurn(), skip: () => myTurn() && luigis('sauce,ham,mushroom') < 0,
-      text: 'Du bist wieder dran! Ich habe eine Pizza mit <b>Soße, Schinken und Pilzen</b> angefangen. Merk dir meine Pilze, die brauchen wir gleich. 😉' },
-    placeStep('mozzarella', () => mine('sauce,basil'),
-      'Du hast einen <b>Mozzarella</b> gezogen! Der Mozzarella kommt bei jeder Pizza <b>zum Schluss</b> obendrauf. Tippe auf den Mozzarella.',
-      'Leg ihn auf deinen Stapel mit <b>Soße und Basilikum</b>. Dann ist deine Margherita fertig.',
+      text: () => tr('tut.luigiStarted') },
+    placeStep('mozzarella', () => mine('sauce,basil'), 'tut.mozza1',
       () => myDone() >= 1),
-    { chef: 'cheer', target: '.menu-strip', next: true, when: () => myTurn(), text: 'Deine erste Pizza! ✅ In deiner Bestellung ist sie jetzt abgehakt. Fertige Pizzen bleiben auf deinem Brett, außer jemand <b>klaut</b> sie oder lässt sie <b>anbrennen</b>.' },
-    placeStep('ham', () => mine('sauce'),
-      'Jetzt der <b>Schinken</b>: Bei der Prosciutto e Funghi kommt er direkt nach der Soße. Tippe auf den Schinken.',
-      'Leg ihn auf deine <b>Soße</b>.',
+    { chef: 'cheer', target: '.menu-strip', next: true, when: () => myTurn(), text: () => tr('tut.firstPizza') },
+    placeStep('ham', () => mine('sauce'), 'tut.ham',
       () => mine('sauce,ham') >= 0 || mine('sauce,ham,mushroom') >= 0),
-    actionStep('steal', () => `${LUIGI}:${luigis('sauce,ham,mushroom')}`, [
-      'Deine letzte Karte ist eine <b>Aktionskarte</b>: ✋ <b>Klauen</b>. Damit nimmst du die <b>oberste Zutat</b> oder eine <b>fertige Pizza</b> von einem Brett und legst sie woanders hin. Tippe auf „Klauen“.',
-      'Aktionskarten spielst du mit <b>„Ausspielen“</b> aus. Tippe darauf.',
-      'Jetzt tippst du auf das, was du klauen willst: <b>meine Pizza mit den Pilzen</b> obendrauf!',
-      'Und wohin damit? Leg die Pilze auf deinen Stapel mit <b>Soße und Schinken</b>. Daraus wird eine <b>Prosciutto e Funghi</b>!',
-    ], () => mine('sauce,ham,mushroom') >= 0 || !myTurn(), () => `${me()}:${mine('sauce,ham')}`),
-    { chef: 'cheer', target: '.mytray .tray', next: true, text: 'Geklaut! 😄 Genau so können die anderen auch <b>dir</b> etwas klauen. Pass also gut auf, was am Tisch passiert. Jetzt bin ich wieder dran.' },
+    actionStep('steal', () => `${LUIGI}:${luigis('sauce,ham,mushroom')}`, ['tut.steal.0', 'tut.steal.1', 'tut.steal.2', 'tut.steal.3'],
+      () => mine('sauce,ham,mushroom') >= 0 || !myTurn(), () => `${me()}:${mine('sauce,ham')}`),
+    { chef: 'cheer', target: '.mytray .tray', next: true, text: () => tr('tut.stolen') },
     { chef: 'point', target: '.opponents', next: true, when: () => myTurn(), skip: () => myTurn() && luigis('sauce,ham,mushroom,mozzarella') < 0,
-      text: 'Mamma mia, ich habe meine <b>Prosciutto e Funghi</b> fertig gemacht! Das lassen wir nicht einfach so stehen …' },
-    placeStep('mozzarella', () => mine('sauce,ham,mushroom'),
-      'Erst mal noch ein <b>Mozzarella</b>: Damit wird deine Prosciutto e Funghi fertig. Tippe auf den Mozzarella.',
-      'Leg ihn auf deinen Stapel mit <b>Soße, Schinken und Pilzen</b>.',
+      text: () => tr('tut.luigiDone') },
+    placeStep('mozzarella', () => mine('sauce,ham,mushroom'), 'tut.mozza2',
       () => myDone() >= 2),
-    actionStep('burn', () => `${LUIGI}:${luigis('sauce,ham,mushroom,mozzarella')}`, [
-      '🔥 <b>Anbrennen</b> lässt einen ganzen Stapel im Ofen verkohlen, egal ob halb oder fertig. Ab in den Müll! Tippe auf „Anbrennen“.',
-      'Tippe auf <b>„Ausspielen“</b>.',
-      'Tippe auf <b>meine fertige Prosciutto e Funghi</b> und bestätige mit „Anbrennen!“.',
-    ], () => luigis('sauce,ham,mushroom,mozzarella') < 0 || !myTurn()),
+    actionStep('burn', () => `${LUIGI}:${luigis('sauce,ham,mushroom,mozzarella')}`, ['tut.burn.0', 'tut.burn.1', 'tut.burn.2'],
+      () => luigis('sauce,ham,mushroom,mozzarella') < 0 || !myTurn()),
     { chef: 'point', target: '[data-do="end"]', when: () => myTurn(), done: () => !myTurn(), cards: [], buttons: ['end'],
-      text: 'Bleibt <b>„Schinken + Pilze“</b>. Die Karte passt gerade nirgends hin, weil jede Pizza mit Soße anfängt. Behalte sie für später! Du musst nicht alle 3 Karten spielen: Tippe auf <b>„Zug beenden“</b>.' },
-    { chef: 'point', target: '.trash', next: true, text: 'Siehst du oben den <b>Müll</b>? Da liegt jetzt meine angebrannte Pizza, und auch meine Karten, die ich <b>abgeworfen</b> habe. Merk dir das, gleich brauchst du ihn!' },
-    { chef: 'point', next: true, text: 'Kleiner Tipp: Karten, die du nicht brauchst, wirfst du mit <b>🗑️ Abwerfen</b> weg. Tippe dazu die Karte an und dann auf „Abwerfen“. Aber Achtung: <b>Aussetzen gilt nicht</b>, mindestens 1 Karte pro Zug musst du spielen.' },
+      text: () => tr('tut.endTurn') },
+    { chef: 'point', target: '.trash', next: true, text: () => tr('tut.trash') },
+    { chef: 'point', next: true, text: () => tr('tut.discard') },
     // ---- Zug 4: Kombi-Karten, Mülltaucher → Speciale ----
     { chef: 'wave', target: '.hand', next: true, when: () => myTurn(), skip: () => myTurn() && myDone() >= 3,
-      text: 'Du bist dran! <b>„Soße + Salami“</b> und <b>„Schinken + Pilze“</b> sind <b>Kombi-Karten</b>, da sind zwei Zutaten drauf. Und der <b>🗑️ Mülltaucher</b> holt dir eine Zutat aus dem Müll zurück.' },
-    placeStep('sauceSalami', () => 'new',
-      'Die <b>Speciale</b> ist die große Pizza: Soße, Salami, Schinken, Pilze und Mozzarella. Tippe auf <b>„Soße + Salami“</b>.',
-      'Tippe auf <b>„Neue Pizza“</b>. Beide Zutaten landen auf einmal auf dem Stapel, das spart dir eine Karte!',
+      text: () => tr('tut.combo') },
+    placeStep('sauceSalami', () => 'new', 'tut.speciale',
       () => mine('sauce,salami') >= 0 || mine('sauce,salami,ham,mushroom') >= 0 || myDone() >= 3),
-    placeStep('hamMushroom', () => mine('sauce,salami'),
-      'Jetzt passt endlich deine Karte <b>„Schinken + Pilze“</b>! Tippe darauf.',
-      'Leg sie auf deinen Stapel mit <b>Soße und Salami</b>.',
+    placeStep('hamMushroom', () => mine('sauce,salami'), 'tut.hamMushroom',
       () => mine('sauce,salami,ham,mushroom') >= 0 || myDone() >= 3),
     digStep(),
     { chef: 'cheer', target: '.menu-strip', next: true,
-      text: 'Der Mülltaucher-Trick! 😎 Der Mozzarella kam von der Pizza, die du mir hast anbrennen lassen. Deine <b>Speciale</b> ist fertig, jetzt fehlt nur noch die <b>Salami</b>.' },
-    { chef: 'point', next: true, text: 'Zwei Sachen noch, während ich spiele: Bei <b>🔄 Falscher Tisch</b> wandern <b>alle Pizzabretter</b> eine Person weiter, super, wenn jemand vorne liegt! Und hast du <b>zwei gleiche Karten</b> (👯 Paar), darfst du beide abwerfen und jemandem blind eine Karte klauen.' },
+      text: () => tr('tut.digDone') },
+    { chef: 'point', next: true, text: () => tr('tut.swapPair') },
     // ---- Zug 5: Salami → Sieg ----
     { chef: 'point', target: '.menu-strip', next: true, when: () => myTurn(),
-      text: 'Deine letzte Pizza: die <b>Salami</b> mit Soße, Salami, Paprika und Mozzarella. Das sind <b>4 Zutaten</b>, aber du hast nur 3 Karten … mit einer Kombi-Karte geht das in einem Zug!' },
-    placeStep('sauceSalami', () => 'new',
-      'Nimm wieder <b>„Soße + Salami“</b>. Tippe darauf.',
-      'Tippe auf <b>„Neue Pizza“</b>.',
+      text: () => tr('tut.lastPizza') },
+    placeStep('sauceSalami', () => 'new', 'tut.sauceSalami2',
       () => mine('sauce,salami') >= 0 || mine('sauce,salami,pepper') >= 0),
-    placeStep('pepper', () => mine('sauce,salami'),
-      'Jetzt die <b>Paprika</b>. Tippe darauf.',
-      'Leg sie auf deinen Stapel mit <b>Soße und Salami</b>.',
+    placeStep('pepper', () => mine('sauce,salami'), 'tut.pepper',
       () => mine('sauce,salami,pepper') >= 0),
-    placeStep('mozzarella', () => mine('sauce,salami,pepper'),
-      'Und zum Schluss der <b>Mozzarella</b>, damit sind alle 4 Pizzen fertig. Tippe darauf!',
-      'Leg ihn auf deine Salami und <b>gewinne</b>! 🏆',
+    placeStep('mozzarella', () => mine('sauce,salami,pepper'), 'tut.mozza3',
       () => game().winner != null),
   ];
 
@@ -1554,19 +1593,14 @@
   function digStep() {
     const stack = () => mine('sauce,salami,ham,mushroom');
     const stage = () => (game().pending ? (ui.mode === 'digPick' ? 3 : 2) : selType() === 'dig' ? 1 : 0);
-    const texts = [
-      'Jetzt der Trick: Dir fehlt der <b>Mozzarella</b>. Im Müll liegt einer! Tippe auf den <b>🗑️ Mülltaucher</b>.',
-      'Tippe auf <b>„Ausspielen“</b>.',
-      'Such dir im Müll den <b>Mozzarella</b> aus.',
-      'Leg den Mozzarella auf deinen Stapel mit <b>Soße, Salami, Schinken und Pilzen</b>.',
-    ];
+    const texts = ['tut.dig.0', 'tut.dig.1', 'tut.dig.2', 'tut.dig.3'];
     return {
       when: () => myTurn(), done: () => myDone() >= 3, skip: () => myTurn() && !handHasType('dig') && !game().pending,
       cards: ['dig'], buttons: ['play', 'cancel'],
       spots: k => k === `${me()}:${stack()}`,
       target: () => ['.hand .card[data-t="dig"]', '[data-do="play"]', '', stackSel(me(), stack())][stage()],
-      text: () => texts[stage()],
-      digHint: () => texts[2],
+      text: () => tr(texts[stage()]),
+      digHint: () => tr(texts[2]),
     };
   }
   // The step currently shown (and therefore steering what may be tapped), or null.
@@ -1595,7 +1629,7 @@
     const list = kind === 'card' ? step.cards : step.buttons;
     const allowed = list ? list.includes(value) : !step.next;
     if (allowed) return false;
-    toast(step.next ? 'Luigi: Tippe erst auf „Weiter“.' : 'Luigi: Mach erst, was ich dir zeige. 😉');
+    toast(tr(step.next ? 'tut.nudge.next' : 'tut.nudge.do'));
     return true;
   }
 
@@ -1662,13 +1696,13 @@
     coachEl.dataset.target = target ? sel : '';
     coachEl.className = 'coach anchored';
     coachEl.innerHTML = `
-      <img src="img/chef-${step.chef || 'point'}.png" alt="Pizzabäcker Luigi">
+      <img src="img/chef-${step.chef || 'point'}.png" alt="${esc(tr('tut.chefAlt'))}">
       <div class="coach-bubble">
         <div class="coach-text">${typeof step.text === 'function' ? step.text() : step.text}</div>
-        <div class="coach-progress" title="Schritt ${tutStep + 1} von ${TUT.length}"><i style="width:${Math.round((tutStep + 1) / TUT.length * 100)}%"></i></div>
+        <div class="coach-progress" title="${esc(tr('tut.progress', { n: tutStep + 1, total: TUT.length }))}"><i style="width:${Math.round((tutStep + 1) / TUT.length * 100)}%"></i></div>
         <div class="coach-foot">
-          <button class="link small-link" data-do="coachSkip">Überspringen</button>
-          ${step.next ? '<button class="btn primary small" data-do="coachNext">Weiter</button>' : '<span class="coach-todo">👆 Du bist dran</span>'}
+          <button class="link small-link" data-do="coachSkip">${tr('tut.skip')}</button>
+          ${step.next ? `<button class="btn primary small" data-do="coachNext">${tr('tut.next')}</button>` : `<span class="coach-todo">👆 ${tr('tut.yourMove')}</span>`}
         </div>
       </div>`;
     placeCoach(target);
@@ -1707,14 +1741,13 @@
     // In a game: exactly this round's menu. Before: the classic menu, or the specials of the chosen theme.
     const R = g ? g.recipes : theme ? E.themeRecipes(theme) : [0, 1, 2, 3];
     const tray = g ? g.players[me()].tray : [];
-    openSheet(`<h2>${theme ? `${E.THEMES[theme].icon} ${esc(E.THEMES[theme].name)}` : 'Pizza-Karte'}</h2>
-      <p class="note">${!g && theme ? 'Die Spezial-Pizzen dieses Themas – dazu kommen in jeder Runde zufällig ausgewählte Klassiker.'
-        : 'Von links nach rechts belegen – der Mozzarella kommt zum Schluss.'}</p>
+    openSheet(`<h2>${theme ? `${E.THEMES[theme].icon} ${esc(themeName(theme))}` : tr('menu.title')}</h2>
+      <p class="note">${!g && theme ? tr('menu.themeNote') : tr('menu.note')}</p>
       <div class="menu-list">${R.map((i, k) => {
         const r = E.RECIPES[i];
         const done = tray.some(st => E.completeRecipe(st, [i]) === i);
         return `<div class="menu-item ${done ? 'done' : ''} ${r.theme ? 'special' : ''}">
-          <div class="menu-name">${done ? '✅ ' : ''}${k + 1}. ${esc(r.name)}${r.theme ? ' <span class="pill">Spezial</span>' : ''}${!g && !theme && i === 3 ? ' <small>(nur 2–3 Spieler:innen)</small>' : ''}</div>
+          <div class="menu-name">${done ? '✅ ' : ''}${k + 1}. ${esc(recipeName(i))}${r.theme ? ` <span class="pill">${tr('menu.special')}</span>` : ''}${!g && !theme && i === 3 ? ` <small>${tr('menu.smallOnly')}</small>` : ''}</div>
           <div class="menu-row">${r.layers.map(l => A.icon(l, 34)).join('<span class="plus">+</span>')}</div>
         </div>`;
       }).join('')}</div>`);
@@ -1723,9 +1756,9 @@
   function trashSheet() {
     const g = game();
     const list = g.trash.slice().reverse();
-    openSheet(`<h2>🗑️ Müll (${list.length})</h2>
-      <p class="note">Oben liegt die zuletzt abgeworfene Karte.</p>
-      <div class="card-grid">${list.map(c => `<div class="gcard ${T[c.t].kind}">${A.cardArt(c.t, 28)}<span>${esc(T[c.t].name)}</span></div>`).join('') || '<p>Noch leer.</p>'}</div>`);
+    openSheet(`<h2>🗑️ ${tr('sheet.trash.title', { n: list.length })}</h2>
+      <p class="note">${tr('sheet.trash.note')}</p>
+      <div class="card-grid">${list.map(c => `<div class="gcard ${T[c.t].kind}">${A.cardArt(c.t, 28)}<span>${esc(ingName(c.t))}</span></div>`).join('') || `<p>${tr('sheet.trash.empty')}</p>`}</div>`);
   }
 
   function digSheet() {
@@ -1735,58 +1768,59 @@
     // In the tutorial Luigi explains inside the window and points at the mozzarella.
     const tut = tutActive();
     const hint = tut && tut.digHint ? tut.digHint() : '';
-    openSheet(`<h2>🗑️ Mülltaucher</h2>
+    openSheet(`<h2>🗑️ ${tr('act.dig')}</h2>
       ${hint ? `<div class="sheet-coach"><img src="img/chef-point.png" alt=""><p>${hint}</p></div>`
-        : '<p class="note">Nimm dir eine Zutat – du musst sie sofort auf dein Brett legen.</p>'}
-      <div class="card-grid">${list.map(c => `<button class="gcard ing pick ${hint && c.t === 'mozzarella' ? 'tut-pick' : ''}" data-do="digPick" data-id="${c.id}">${A.cardArt(c.t, 28)}<span>${esc(T[c.t].name)}</span></button>`).join('')}</div>`, 'lock');
+        : `<p class="note">${tr('sheet.dig.note')}</p>`}
+      <div class="card-grid">${list.map(c => `<button class="gcard ing pick ${hint && c.t === 'mozzarella' ? 'tut-pick' : ''}" data-do="digPick" data-id="${c.id}">${A.cardArt(c.t, 28)}<span>${esc(ingName(c.t))}</span></button>`).join('')}</div>`, 'lock');
   }
 
   function logSheet() {
     const g = game();
-    openSheet(`<h2>Was ist passiert?</h2><ol class="log">${g.log.slice().reverse().map(l => `<li>${esc(l.text)}</li>`).join('')}</ol>`);
+    openSheet(`<h2>${tr('sheet.log.title')}</h2><ol class="log">${g.log.slice().reverse().map(l => `<li>${logText(l, true)}</li>`).join('')}</ol>`);
   }
 
   function audioSheet() {
-    openSheet(`<h2>🔊 Ton</h2>
+    openSheet(`<h2>🔊 ${tr('audio.title')}</h2>
       <div class="col">
-        <button class="toggle ${Snd.music ? 'on' : ''}" data-do="toggleMusic"><span>🎵 Musik</span><i></i></button>
-        <button class="toggle ${Snd.sfx ? 'on' : ''}" data-do="toggleSfx"><span>🔔 Soundeffekte</span><i></i></button>
+        <button class="toggle ${Snd.music ? 'on' : ''}" data-do="toggleMusic"><span>🎵 ${tr('audio.music')}</span><i></i></button>
+        <button class="toggle ${Snd.sfx ? 'on' : ''}" data-do="toggleSfx"><span>🔔 ${tr('audio.sfx')}</span><i></i></button>
       </div>`, 'info', 'audio');
   }
 
   function moreSheet() {
-    openSheet(`<h2>Tisch ${esc(view.code)}</h2>
+    openSheet(`<h2>${tr('sheet.more.title', { code: esc(view.code) })}</h2>
       <div class="col">
-        <button class="btn" data-do="audio">🔊 Musik & Sounds</button>
-        <button class="btn" data-do="rules">📖 Spielregeln</button>
-        <button class="btn" data-do="log">📜 Spielverlauf</button>
-        <button class="btn" data-do="share">🔗 Tisch-Link teilen</button>
-        <button class="btn danger" data-do="leave">Tisch verlassen</button>
+        <button class="btn" data-do="audio">🔊 ${tr('sheet.more.audio')}</button>
+        <button class="btn" data-do="rules">📖 ${tr('sheet.more.rules')}</button>
+        <button class="btn" data-do="log">📜 ${tr('sheet.more.log')}</button>
+        <button class="btn" data-do="lang">🌐 ${tr('lang.title')}</button>
+        <button class="btn" data-do="share">🔗 ${tr('sheet.more.share')}</button>
+        <button class="btn danger" data-do="leave">${tr('lobby.leave')}</button>
       </div>`);
   }
 
   function rulesSheet() {
-    openSheet(`<h2>📖 So wird gespielt</h2>
+    openSheet(`<h2>📖 ${tr('rules.title')}</h2>
       <div class="rules">
-        <p><b>Ziel:</b> Stelle als Erste:r alle Pizzen der Bestellung auf deinem Pizzabrett fertig. 2–3 Personen: alle 4 Pizzen. 4–6 Personen: nur die ersten 3.</p>
-        <p><b>Dein Zug:</b> Spiele 1, 2 oder 3 Karten aus deiner Hand – beliebig kombiniert:</p>
+        <p>${tr('rules.goal')}</p>
+        <p>${tr('rules.turn')}</p>
         <ul>
-          <li><b>Zutat legen</b> – auf eine deiner Pizzen oder als neue Pizza. Gelegte Zutaten bleiben, wo sie sind.</li>
-          <li><b>Abwerfen</b> – unerwünschte Karten in den Müll.</li>
-          <li><b>Aktionskarte</b> ausspielen – danach kommt sie in den Müll.</li>
+          <li>${tr('rules.turn.place')}</li>
+          <li>${tr('rules.turn.discard')}</li>
+          <li>${tr('rules.turn.action')}</li>
         </ul>
-        <p>Aussetzen gilt nicht. Am Ende deines Zugs ziehst du automatisch auf 3 Karten nach. Ist der Stapel leer, wird der Müll umgedreht (ohne Mischen).</p>
-        <p><b>Reihenfolge:</b> Pizzen werden immer in der Reihenfolge der Bestellung belegt (von links nach rechts: Soße zuerst, Mozzarella zuletzt). Dieselbe Pizza darf nie doppelt auf deinem Brett liegen – die App zeigt dir nur erlaubte Felder.</p>
-        <p><b>Kombi-Karten:</b> „Soße + Salami“ und „Schinken + Pilze“ zählen als zwei Zutaten. Die drei „fertigen Pizzen“ sind eine komplette Pizza auf einer Karte.</p>
-        <h3>Aktionskarten</h3>
+        <p>${tr('rules.draw')}</p>
+        <p>${tr('rules.order')}</p>
+        <p>${tr('rules.combo')}</p>
+        <h3>${tr('rules.actions')}</h3>
         <ul>
-          <li>🔥 <b>Anbrennen:</b> Lass eine beliebige Pizza oder halbe Pizza anbrennen (auch deine eigene).</li>
-          <li>✋ <b>Klauen:</b> Nimm von einem beliebigen Brett eine fertige Pizza oder die oberste Zutat (auch den Mozzarella) und lege sie auf ein anderes Brett.</li>
-          <li>🗑️ <b>Mülltaucher:</b> Nimm eine Zutat aus dem Müll und lege sie sofort auf dein Brett.</li>
-          <li>🔄 <b>Falscher Tisch:</b> Alle Pizzabretter wandern gleichzeitig eine Person weiter.</li>
+          <li>🔥 ${tr('rules.act.burn')}</li>
+          <li>✋ ${tr('rules.act.steal')}</li>
+          <li>🗑️ ${tr('rules.act.dig')}</li>
+          <li>🔄 ${tr('rules.act.swap')}</li>
         </ul>
-        <p><b>👯 Paar:</b> Hast du zwei identische Karten, darfst du beide abwerfen (zählt als 2 gespielte Karten) und blind eine Karte von einer anderen Person ziehen. Die Person startet ihren nächsten Zug mit einer Karte weniger.</p>
-        <p><b>Profi-Tipp:</b> Lass eine Pizza mit einer Zutat anbrennen, die du brauchst – und hol sie dir danach aus dem Müll zurück.</p>
+        <p>${tr('rules.pair')}</p>
+        <p>${tr('rules.tip')}</p>
       </div>`);
   }
 
@@ -1821,9 +1855,9 @@
       const k = l.fx && l.fx.k;
       if (k === 'burn' || k === 'steal' || k === 'swap' || k === 'dig') return k;
       if (k === 'pair') return 'steal';
-      if (/✅|fertig/.test(l.text)) return 'complete';
-      if (/in den Müll/.test(l.text)) return 'discard';
-      if (/legt/.test(l.text)) return 'place';
+      if (l.k === 'log.done' || l.k === 'log.win') return 'complete';
+      if (l.k === 'log.discard') return 'discard';
+      if (l.k === 'log.place' || l.k === 'log.placeNew' || l.k === 'log.digPick') return 'place';
       return null;
     };
     const rank = ['place', 'discard', 'dig', 'swap', 'steal', 'burn', 'complete'];
@@ -1848,7 +1882,7 @@
     const mt = myTurn();
     if (mt && !wasMyTurn) {
       if (navigator.vibrate) navigator.vibrate(60);
-      document.title = '🍕 Du bist dran! – Pizza Panic';
+      document.title = `🍕 ${tr('turn.yours')} – Pizza Panic`;
       Snd.play('turn');
     } else if (!mt) document.title = 'Pizza Panic';
     wasMyTurn = mt;
@@ -1880,12 +1914,12 @@
     return () => {
       if (wasMine) {
         // My turn just ended (often automatically after the 3rd card): say so before the next player starts.
-        turnBanner('Zug vorbei!', 'Du ziehst auf 3 Karten nach', 'done');
-        setTimeout(() => turnBanner(`${nextName} ist dran`, '', 'other'), 1300);
+        turnBanner(tr('turn.over'), tr('turn.over.sub'), 'done');
+        setTimeout(() => turnBanner(tr('turn.other', { name: nextName }), '', 'other'), 1300);
       } else if (mineNow) {
-        turnBanner('Du bist dran!', 'Spiele 1 bis 3 Karten', 'mine');
+        turnBanner(tr('turn.yours'), tr('turn.yours.sub'), 'mine');
       } else {
-        turnBanner(`${nextName} ist dran`, '', 'other');
+        turnBanner(tr('turn.other', { name: nextName }), '', 'other');
       }
     };
   }
@@ -1906,7 +1940,6 @@
 
   // What opponents (and bots) just played appears briefly above their panel: "🍄 Pilze gelegt".
   let movesSeen = { code: null, n: 0 };
-  const typeByName = name => Object.keys(T).find(t => T[t].name === name);
 
   function showOpponentMoves() {
     const g = game();
@@ -1916,22 +1949,22 @@
     const fresh = g.log.filter(l => l.n > movesSeen.n && !l.fx);
     movesSeen.n = last;
     fresh.forEach((l, k) => {
-      let m, verb, cls = '';
-      if ((m = l.text.match(/^(.+?) legt (.+?)( als neue Pizza)?\.$/))) verb = 'gelegt';
-      else if ((m = l.text.match(/^(.+?) wirft (.+?) in den Müll\.$/))) { verb = 'weggeworfen'; cls = 'trash'; }
-      else if ((m = l.text.match(/^✅ (.+?) stellt eine Pizza (.+?) fertig!$/))) { verb = 'fertig!'; cls = 'done'; }
-      if (!m) return;
-      const who = g.players.findIndex(p => p.name === m[1]);
+      const p = l.p || {};
+      let chipKey, cls = '', what, t = null;
+      if (l.k === 'log.place' || l.k === 'log.placeNew') { chipKey = 'chip.placed'; t = p.card; what = ingName(p.card); }
+      else if (l.k === 'log.discard') { chipKey = 'chip.discarded'; cls = 'trash'; t = p.card; what = ingName(p.card); }
+      else if (l.k === 'log.done') { chipKey = 'chip.done'; cls = 'done'; what = recipeName(p.recipe); }
+      if (!chipKey) return;
+      const who = g.players.findIndex(pl => pl.name === p.who);
       if (who < 0 || who === me()) return;
       const panel = app.querySelector(`.opp[data-player="${who}"]`);
       if (!panel) return;
-      const t = typeByName(m[2]);
-      const icon = cls === 'done' ? '🍕' : t ? A.cardArt(t, 22) : '';
+      const icon = cls === 'done' ? '🍕' : t && T[t] ? A.cardArt(t, 22) : '';
       setTimeout(() => {
         const r = panel.getBoundingClientRect();
         const el = document.createElement('div');
         el.className = `move-chip ${cls}`;
-        el.innerHTML = `${icon}<span><b>${esc(m[2])}</b> ${verb}</span>`;
+        el.innerHTML = `${icon}<span>${tr(chipKey, { what: `<b>${esc(what)}</b>` })}</span>`;
         el.style.left = `${Math.min(window.innerWidth - 190, Math.max(6, r.left + 10))}px`;
         el.style.top = `${r.top + r.height - 18}px`;
         document.body.appendChild(el);
@@ -1943,13 +1976,13 @@
   async function share() {
     const base = SERVER ? CONFIG.publicUrl : location.origin;
     const url = `${base}/?room=${view.code}`;
-    const text = `Komm an meinen Pizza-Panic-Tisch! Code: ${view.code}`;
+    const text = tr('share.text', { code: view.code });
     if (navigator.share) {
       try { await navigator.share({ title: 'Pizza Panic', text, url }); return; } catch { /* abgebrochen */ }
     }
     try {
       await navigator.clipboard.writeText(url);
-      toast('Link kopiert!');
+      toast(tr('share.copied'));
     } catch {
       toast(url);
     }
@@ -1957,13 +1990,13 @@
 
   function joinByCode(code) {
     code = (code || '').trim().toUpperCase();
-    if (code.length !== 4) return toast('Der Code hat 4 Buchstaben.');
+    if (code.length !== 4) return toast(tr('friends.codeLength'));
     joinTable('/api/join', { code });
   }
 
   async function saveName() {
     const name = (document.getElementById('newName').value || '').trim();
-    if (!name) return toast('Bitte gib einen Namen ein.');
+    if (!name) return toast(tr('profile.nameMissing'));
     try {
       profile = (await post('/api/profile/update', withProfile({ name }))).profile;
       localStorage.setItem(LS_NAME, name);
@@ -1991,11 +2024,11 @@
     if (ui.mode === 'digPick' && tg.has(key)) return send({ type: 'digPick', cardId: ui.dig, stack: stackIdx });
     if (ui.mode === 'burn' && tg.has(key)) {
       const st = g.players[p].tray[stackIdx];
-      const owner = p === me() ? 'deinem eigenen Brett' : `dem Brett von ${g.players[p].name}`;
-      openSheet(`<h2>🔥 Wirklich anbrennen lassen?</h2>
+      const what = esc(stackLabel(st, g.recipes));
+      openSheet(`<h2>🔥 ${tr('sheet.burn.title')}</h2>
         <div class="stack-preview">${st.map(c => miniCard(c, 30)).join('')}</div>
-        <p>${esc(stackLabel(st, g.recipes))} auf ${esc(owner)} landet im Müll.</p>
-        <div class="btn-row"><button class="btn primary" data-do="burnYes" data-p="${p}" data-s="${stackIdx}">Anbrennen!</button><button class="btn ghost" data-do="closeSheet">Abbrechen</button></div>`, 'ctx');
+        <p>${p === me() ? tr('sheet.burn.own', { what }) : tr('sheet.burn.other', { what, name: esc(g.players[p].name) })}</p>
+        <div class="btn-row"><button class="btn primary" data-do="burnYes" data-p="${p}" data-s="${stackIdx}">${tr('sheet.burn.yes')}</button><button class="btn ghost" data-do="closeSheet">${tr('btn.cancel')}</button></div>`, 'ctx');
       return;
     }
     if (ui.mode === 'stealSrc' && tg.has(key)) {
@@ -2003,10 +2036,10 @@
       const st = g.players[p].tray[stackIdx];
       const from = { player: p, stack: stackIdx };
       if (opts.whole.length && opts.top.length) {
-        openSheet(`<h2>✋ Was klaust du?</h2>
+        openSheet(`<h2>✋ ${tr('sheet.steal.title')}</h2>
           <div class="col">
-            <button class="btn primary" data-do="stealMode" data-m="whole">Die ganze fertige Pizza</button>
-            <button class="btn" data-do="stealMode" data-m="top">Nur die oberste Zutat (${esc(T[st[st.length - 1].t].name)})</button>
+            <button class="btn primary" data-do="stealMode" data-m="whole">${tr('sheet.steal.whole')}</button>
+            <button class="btn" data-do="stealMode" data-m="top">${tr('sheet.steal.top', { card: esc(ingName(st[st.length - 1].t)) })}</button>
           </div>`, 'ctx');
         ui.steal = { from, mode: null };
         return;
@@ -2044,12 +2077,12 @@
     const c = findCard(ui.sel);
     if (!c) return;
     if (c.t === 'burn') {
-      if (!g.players.some(p => p.tray.length)) return toast('Es gibt noch nichts zum Anbrennen.');
+      if (!g.players.some(p => p.tray.length)) return toast(tr('toast.nothingToBurn'));
       ui.mode = 'burn';
       return render();
     }
     if (c.t === 'steal') {
-      if (!stealSources().length) return toast('Gerade gibt es nichts, was sich klauen lässt.');
+      if (!stealSources().length) return toast(tr('toast.nothingToSteal'));
       ui.mode = 'stealSrc';
       return render();
     }
@@ -2058,11 +2091,11 @@
       const n = g.players.length;
       const prev = g.players[(me() - 1 + n) % n].name;
       const next = g.players[(me() + 1) % n].name;
-      openSheet(`<h2>🔄 Falscher Tisch!</h2>
-        <p class="note">Alle Pizzabretter wandern gleichzeitig – inklusive aller Pizzen.</p>
+      openSheet(`<h2>${tr('fx.swap.title')}</h2>
+        <p class="note">${tr('sheet.swap.note')}</p>
         <div class="col">
-          <button class="btn" data-do="swapDir" data-d="next">Weiter an die nächste Person<br><small>Du bekommst das Brett von ${esc(prev)}</small></button>
-          <button class="btn" data-do="swapDir" data-d="prev">Zurück an die vorherige Person<br><small>Du bekommst das Brett von ${esc(next)}</small></button>
+          <button class="btn" data-do="swapDir" data-d="next">${tr('sheet.swap.next')}<br><small>${tr('sheet.swap.get', { name: esc(prev) })}</small></button>
+          <button class="btn" data-do="swapDir" data-d="prev">${tr('sheet.swap.prev')}<br><small>${tr('sheet.swap.get', { name: esc(next) })}</small></button>
         </div>`, 'ctx');
     }
   }
@@ -2072,10 +2105,10 @@
     const c = findCard(ui.sel);
     const twin = twinOf(c);
     if (!twin) return;
-    openSheet(`<h2>👯 Paar abwerfen</h2>
-      <p class="note">Du wirfst beide „${esc(T[c.t].name)}“ ab und ziehst blind eine Karte. Von wem?</p>
+    openSheet(`<h2>👯 ${tr('sheet.pair.title')}</h2>
+      <p class="note">${tr('sheet.pair.note', { card: esc(ingName(c.t)) })}</p>
       <div class="col">${g.players.map((p, i) => i === me() || !p.handCount ? '' :
-        `<button class="btn" data-do="pairTarget" data-i="${i}">${esc(p.name)} <small>(${p.handCount} Karten)</small></button>`).join('')}</div>`, 'ctx');
+        `<button class="btn" data-do="pairTarget" data-i="${i}">${esc(p.name)} <small>(${tr(p.handCount > 1 ? 'sheet.pair.cards.other' : 'sheet.pair.cards.one', { n: p.handCount })})</small></button>`).join('')}</div>`, 'ctx');
   }
 
   async function click(e) {
@@ -2113,7 +2146,7 @@
         tutStep++;
         return render();
       case 'coachSkip':
-        if (!confirm('Erklärungen überspringen? Du spielst die Runde dann ohne Luigis Hilfe weiter.')) return;
+        if (!confirm(tr('tut.skip.confirm'))) return;
         tutStep = TUT.length;
         return render();
       case 'editName': return nameSheet();
@@ -2121,6 +2154,8 @@
       case 'deleteProfile': return deleteProfile();
       case 'levels': return levelsSheet();
       case 'audio': return audioSheet();
+      case 'lang': return langSheet();
+      case 'setLang': return setLang(d.id);
       case 'toggleMusic':
         Snd.setMusic(!Snd.music);
         return audioSheet();
@@ -2131,7 +2166,7 @@
       case 'setTheme': return send({ type: 'setTheme', theme: d.id || null });
       case 'themeShop':
         // Locked pack in the lobby: leave the table view for the shop, the table stays open.
-        toast('Dieses Pack gibt es im 🛒 Shop unter „Themen“.');
+        toast(tr('toast.themeShop'));
         return;
       case 'openShop':
         shopTab = 'themes';
@@ -2145,7 +2180,7 @@
         return render();
       case 'buyItem': {
         const ok = await shopPost('/api/shop/buy', { item: d.id });
-        if (ok) celebrate('🎉 Freigeschaltet!');
+        if (ok) celebrate(`🎉 ${tr('toast.unlocked')}`);
         return;
       }
       case 'equipTray': return shopPost('/api/shop/equip', { tray: d.id });
@@ -2177,7 +2212,7 @@
       case 'restart': return send({ type: 'restart' });
       case 'kick': return send({ type: 'kick', target: Number(d.i) });
       case 'leave':
-        if (!confirm(game() && game().winner == null ? 'Tisch verlassen? Ein Bot spielt für dich weiter.' : 'Tisch verlassen?')) return;
+        if (!confirm(tr(game() && game().winner == null ? 'lobby.leave.confirmGame' : 'lobby.leave.confirm'))) return;
         return leaveTable();
       case 'card': return onCard(Number(d.id));
       case 'stack': return onStack(Number(d.p), d.s);
