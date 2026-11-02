@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="pub/fonts.css">
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1080px; height: 1920px; overflow: hidden; background: transparent; font-family: 'Nunito', sans-serif; }
+  .bg {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(900px 700px at 50% 0%, #F7857A 0%, rgba(247, 133, 122, 0) 70%),
+      repeating-conic-gradient(rgba(255, 255, 255, .08) 0 25%, transparent 0 50%) 0 0 / 90px 90px,
+      linear-gradient(170deg, #E9564A 0%, #D23E32 55%, #A92A22 100%);
+  }
+  /* Frame: background everywhere except a rounded window for the footage (x 161, y 250, 758x1640). */
+  .frame { position: absolute; inset: 0; }
+  .frame .bg { -webkit-mask: radial-gradient(#000 0 0) no-repeat, linear-gradient(#000 0 0); }
+  .hole { position: absolute; left: 161px; top: 250px; width: 758px; height: 1640px; border-radius: 48px;
+    box-shadow: 0 0 0 14px #2B2220, 0 0 0 9999px #fff0; }
+  h1 { font: 700 86px/1.02 'Fredoka', sans-serif; color: #fff; text-align: center;
+    -webkit-text-stroke: 10px #2B2220; paint-order: stroke fill; text-shadow: 0 8px 0 rgba(43, 34, 32, .35); }
+  .cap { position: absolute; left: 30px; right: 30px; top: 0; height: 236px; display: flex; flex-direction: column; justify-content: center; gap: 10px; }
+  .cap.two h1 { font-size: 74px; }
+  .cap p { text-align: center; font: 800 40px 'Nunito', sans-serif; color: #FFF4E0; text-shadow: 0 3px 0 rgba(43, 34, 32, .4); }
+  .card { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; }
+  .card .logo { width: 900px; margin-top: 170px; filter: drop-shadow(0 18px 18px rgba(0, 0, 0, .35)); }
+  .card h2 { margin-top: 30px; font: 700 70px/1.1 'Fredoka', sans-serif; color: #fff; text-align: center;
+    -webkit-text-stroke: 8px #2B2220; paint-order: stroke fill; }
+  .card .chef { position: absolute; bottom: 0; height: 640px; filter: drop-shadow(0 14px 14px rgba(0, 0, 0, .3)); }
+  .ings { position: absolute; display: flex; gap: 26px; }
+  .ings img { width: 120px; filter: drop-shadow(0 8px 6px rgba(0, 0, 0, .3)); }
+  .play { margin-top: 40px; padding: 26px 56px; background: #fff; border: 8px solid #2B2220; border-radius: 999px;
+    box-shadow: 0 10px 0 #2B2220; font: 700 64px 'Fredoka', sans-serif; color: #2B2220; display: flex; align-items: center; gap: 22px; }
+  .play svg { width: 60px; height: 60px; }
+  .facts { margin-top: 44px; font: 800 44px/1.5 'Nunito', sans-serif; color: #FFF4E0; text-align: center; text-shadow: 0 3px 0 rgba(43, 34, 32, .4); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+  const q = new URLSearchParams(location.search);
+  const what = q.get('w');
+  const root = document.getElementById('root');
+  if (what === 'bg') {
+    root.innerHTML = '<div class="bg"></div>';
+  } else if (what === 'frame') {
+    // Background with a transparent rounded window + dark border around it.
+    root.innerHTML = `<svg width="1080" height="1920" style="position:absolute;inset:0">
+      <defs><mask id="m"><rect width="1080" height="1920" fill="#fff"/><rect x="161" y="250" width="758" height="1640" rx="48" fill="#000"/></mask></defs>
+      <foreignObject width="1080" height="1920" mask="url(#m)"><div xmlns="http://www.w3.org/1999/xhtml" class="bg"></div></foreignObject>
+      <rect x="154" y="243" width="772" height="1654" rx="55" fill="none" stroke="#2B2220" stroke-width="14"/>
+    </svg>`;
+  } else if (what === 'cap') {
+    const h = q.get('h'), p = q.get('p');
+    root.innerHTML = `<div class="cap ${h.includes('|') ? 'two' : ''}"><h1>${h.split('|').join('<br>')}</h1>${p ? `<p>${p}</p>` : ''}</div>`;
+  } else if (what === 'title') {
+    root.innerHTML = `<div class="bg"></div><div class="card">
+      <img class="logo" src="pub/img/logo.png" style="width:700px;margin-top:110px">
+      <h2>The online<br>pizza card game</h2>
+      <div class="ings" style="top:1170px">${['sauce', 'basil', 'salami', 'mushroom', 'mozzarella'].map(i => `<img src="pub/img/${i}.png">`).join('')}</div>
+      <img class="chef" src="pub/img/chef-wave.png" style="height:580px">
+    </div>`;
+  } else if (what === 'end') {
+    root.innerHTML = `<div class="bg"></div><div class="card">
+      <img class="logo" src="pub/img/logo.png" style="width:760px;margin-top:120px">
+      <div class="play"><svg viewBox="0 0 24 24"><path fill="#34A853" d="M3.6 1.8 13.5 12 3.6 22.2c-.4-.2-.6-.6-.6-1.1V2.9c0-.5.2-.9.6-1.1z"/><path fill="#FBBC04" d="m17 8.4-3.5 3.6 3.5 3.6 4-2.3c.9-.5.9-1.9 0-2.5z"/><path fill="#EA4335" d="M13.5 12 3.6 22.2c.4.2.9.2 1.4-.1L17 15.6z"/><path fill="#4285F4" d="M3.6 1.8 13.5 12 17 8.4 5 1.9c-.5-.3-1-.3-1.4-.1z"/></svg>Free on Google Play</div>
+      <div class="facts">2–6 players · online · bots<br>5 languages</div>
+      <img class="chef" src="pub/img/chef-cheer.png" style="height:600px">
+    </div>`;
+  }
+</script>
+</body>
+</html>

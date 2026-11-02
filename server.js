@@ -50,7 +50,18 @@ const DEMO_SCENES = {
       [['sauce', 'salami', 'peperoni']],
     ],
   },
-};const BOT_LEVEL_SHIFT = { easy: -2, normal: 0, hard: 3 };
+  // Trailer: finish the Funghi, steal Mia's finished Salami, burn Tom's Funghi.
+  video: {
+    theme: null, bots: ['Mia', 'Tom'], botLevels: [11, 8], botTrays: ['neon', 'picnic'],
+    hand: ['mozzarella', 'steal', 'burn'],
+    trays: [
+      [['sauce', 'basil', 'mozzarella'], ['sauce', 'ham', 'mushroom'], ['sauce', 'salami']],
+      [['sauce', 'salami', 'pepper', 'mozzarella'], ['sauce', 'basil']],
+      [['sauce', 'ham', 'mushroom', 'mozzarella'], ['sauce', 'salami', 'ham']],
+    ],
+  },
+};
+const BOT_LEVEL_SHIFT = { easy: -2, normal: 0, hard: 3 };
 const TUTORIAL_BONUS_XP = 50;
 
 // Matchmaking: level range starts narrow and widens the longer someone waits.
