@@ -1,6 +1,7 @@
--- Spielerprofile für Pizza Panic (eigenes Supabase-Projekt, getrennt von Smash Burger).
+-- Spielerprofile für Pizza Panic. Liegen im Supabase-Projekt "smash-burger" (Gratis-Tarif: max. 2 Projekte),
+-- aber in eigenen Tabellen mit Präfix pizza_ (Namen per SUPABASE_PROFILES_TABLE / SUPABASE_PURCHASES_TABLE änderbar).
 -- Nur der Server (Service-Key) greift darauf zu.
-create table if not exists public.profiles (
+create table if not exists public.pizza_profiles (
   id uuid primary key,
   name text not null check (char_length(name) between 1 and 18),
   xp integer not null default 0 check (xp >= 0),
@@ -20,7 +21,7 @@ create table if not exists public.profiles (
 );
 
 -- Eingelöste Google-Play-Käufe (jeder Kauf-Token nur einmal).
-create table if not exists public.purchases (
+create table if not exists public.pizza_purchases (
   token text primary key,
   profile_id uuid not null,
   product text not null,
@@ -28,5 +29,5 @@ create table if not exists public.purchases (
 );
 
 -- RLS an, aber keine Policies: Zugriff nur mit dem Service-Key des Servers.
-alter table public.profiles enable row level security;
-alter table public.purchases enable row level security;
+alter table public.pizza_profiles enable row level security;
+alter table public.pizza_purchases enable row level security;
