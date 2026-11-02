@@ -52,7 +52,11 @@ Smash Burger selbst bleibt unverändert und darf nicht angefasst werden.
 - [x] Android: Paket com.duoh.pizzapanic, Strings, AdMob (App ca-app-pub-2648510730204337~7315516608,
       Belohnung ca-app-pub-2648510730204337/1514901729), neuer Keystore in `Desktop\pizza-panic-keys` (PASSWORT.txt),
       Version 1.0 / versionCode 1 (bei jedem Upload erhöhen), APK im Drive `G:\Mon Drive\PizzaPanic` (nur die neueste)
-- [ ] Render-Dienst + Supabase-Projekt anlegen, GitHub-Repo, Store-Eintrag (`store/`) und Promo-Bilder neu
+- [x] Datenbank: Gratis-Tarif erlaubt nur 2 Projekte → Nutzer-Entscheidung: Tabellen `pizza_profiles` / `pizza_purchases`
+      im Supabase-Projekt „smash-burger“ (svadhluclwfakgfgpgtu, Frankfurt). Gleiche SUPABASE_URL + Secret-Key wie Smash Burger.
+- [x] Lokales Git-Repo mit Commits, Remote https://github.com/Windwidos/pizza-panic.git
+- [ ] GitHub-Repo anlegen (Nutzer) → push; Render-Blueprint aus render.yaml (Nutzer) + Env-Variablen
+- [ ] Play-Console-App, Store-Eintrag (`store/`) und Promo-Bilder neu
 
 ## Wichtige Hinweise aus Smash Burger (bitte übernehmen)
 - Alle Texte Deutsch, Antworten an den Nutzer immer auf Deutsch.
