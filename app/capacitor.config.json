@@ -1,0 +1,8 @@
+{
+  "appId": "com.duoh.pizzapanic",
+  "appName": "Pizza Panic",
+  "webDir": "www",
+  "android": {
+    "backgroundColor": "#FFF4E0"
+  }
+}
