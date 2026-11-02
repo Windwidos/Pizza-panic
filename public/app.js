@@ -1237,7 +1237,7 @@
           <h2>${won ? tr('result.youWin') : tr('result.otherWins', { name: esc(g.players[g.winner].name) })}</h2>
           <p>${view.kind === 'tutorial' ? tr('result.tutDone')
             : won ? tr('result.wonText') : tr('result.lostText')}</p>
-          ${r ? `
+          ${r && r.practice ? `<p class="note">${tr('result.practice')}</p>` : r ? `
             <div class="xp-gain">
               <div class="xp-plus">+${r.xp} XP</div>
               <div class="xp-detail">${tr('result.xp.base')} · ${tr('result.xp.pizzas', { n: r.burgers })}${r.won ? ` · ${tr('result.xp.win')}` : ''}${r.bonus ? ` · ${tr('result.xp.tut', { n: r.bonus })}` : ''}</div>
@@ -1248,7 +1248,7 @@
                 ${S.unlockedBetween(r.before.level, r.after.level).map(t => `<div class="unlock">${traySwatch(t.id)}<span><b>${esc(tr('tray.' + t.id))}</b>${t.reward ? tr('result.unlock.gift') : tr('result.unlock.buy')}</span></div>`).join('')}` : ''}
               <div class="coin-gain">${tr('result.coins', { n: r.coins })}${r.doubled ? ' <span class="pill ok">×2</span>' : ''}</div>
             </div>
-            ${!r.doubled && profile && (profile.supporter || (isNative && (profile.doublesToday || 0) < S.DOUBLES_PER_DAY)) ? `
+            ${!r.doubled && view.kind !== 'tutorial' && profile && (profile.supporter || (isNative && (profile.doublesToday || 0) < S.DOUBLES_PER_DAY)) ? `
               <button class="btn big double-btn" data-do="double">${profile && profile.supporter ? `⭐ ${tr('result.double')}` : `▶️ ${tr('result.doubleVideo')}`}</button>` : ''}` : ''}
           ${buttons}
         </div>

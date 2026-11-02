@@ -63,6 +63,7 @@ const DEMO_SCENES = {
 };
 const BOT_LEVEL_SHIFT = { easy: -2, normal: 0, hard: 3 };
 const TUTORIAL_BONUS_XP = 50;
+const TUTORIAL_COINS = 50; // start gift for the first tutorial (instead of the normal win coins)
 
 // Matchmaking: level range starts narrow and widens the longer someone waits.
 const MM_TICK = 1500;
@@ -158,22 +159,32 @@ function settle(room) {
     // Bot games pay less (easy 50 %, normal 75 %, hard 100 %) so nobody levels up past real opponents on easy bots.
     const factor = room.kind === 'bots' ? BOT_REWARD[room.skill] || 1 : 1;
     let xp = Math.round(E.gameXp(won, burgers, n) * factor);
-    let bonus = 0;
+    let coins = Math.round(Shop.gameCoins(won, burgers) * factor);
+    let bonus = 0, practice = false;
     if (room.kind === 'tutorial') {
-      bonus = room.tutorialBonus ? TUTORIAL_BONUS_XP : 0;
-      xp += bonus;
+      // Luigi always lets you win, so only the FIRST tutorial pays (fixed start gift); repeats are practice only.
+      if (room.tutorialBonus) {
+        bonus = TUTORIAL_BONUS_XP;
+        xp += bonus;
+        coins = TUTORIAL_COINS;
+      } else {
+        xp = 0;
+        coins = 0;
+        practice = true;
+      }
       prof.tutorialDone = true;
     }
-    const coins = Math.round(Shop.gameCoins(won, burgers) * factor) + (bonus ? 50 : 0);
     const before = E.levelInfo(prof.xp);
     prof.xp += xp;
     prof.coins += coins;
-    prof.games += 1;
-    if (won) prof.wins += 1;
+    if (!practice) {
+      prof.games += 1;
+      if (won) prof.wins += 1;
+    }
     const after = E.levelInfo(prof.xp);
     p.level = after.level;
     Profiles.save(prof).catch(e => console.error('Profil speichern:', e.message));
-    return { xp, coins, won, burgers, bonus, before, after, totalXp: prof.xp, doubled: false };
+    return { xp, coins, won, burgers, bonus, practice, before, after, totalXp: prof.xp, doubled: false };
   });
 }
 
@@ -365,7 +376,8 @@ function handleLobbyAction(room, idx, a) {
     case 'double': {
       const prof = room.players[idx].profile;
       const r = room.results && room.results[idx];
-      if (!prof || !r) return 'err.nothingToDouble';
+      // The tutorial pays a fixed start gift (or nothing when repeated) – not doublable.
+      if (!prof || !r || room.kind === 'tutorial') return 'err.nothingToDouble';
       if (r.doubled) return 'err.alreadyDoubled';
       if (!prof.supporter && !useAd(prof, 'double')) return 'err.doublesUsed';
       doubleResult(room, idx);

@@ -417,6 +417,7 @@
     'result.youWin': '¡Has ganado!',
     'result.otherWins': '¡{name} gana!',
     'result.tutDone': '¡Partida de práctica superada! Ya estás listo para rivales de verdad.',
+    'result.practice': 'Partida de práctica: solo para practicar, sin XP ni monedas. La recompensa ya la recibiste la primera vez.',
     'result.wonText': 'Todas las pizzas terminadas: ¡eres todo un pizzero!',
     'result.lostText': '¡A la cocina, que viene la siguiente ronda!',
     'result.xp.base': '20 por jugar',

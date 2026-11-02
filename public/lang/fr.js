@@ -417,6 +417,7 @@
     'result.youWin': 'Tu as gagné ',
     'result.otherWins': '{name} a gagné ',
     'result.tutDone': 'Entraînement réussi – tu es prêt pour de vrais adversaires ',
+    'result.practice': 'Partie d’entraînement – juste pour s’exercer, sans XP ni pièces. Tu as reçu la récompense la première fois.',
     'result.wonText': 'Toutes les pizzas sont prêtes – tu es un vrai pizzaiolo ',
     'result.lostText': 'Retour en cuisine, on remet ça ',
     'result.xp.base': '20 pour avoir joué',

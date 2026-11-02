@@ -48,7 +48,10 @@ async function sb(method, table, query, body, prefer) {
     err.status = r.status;
     throw err;
   }
-  return r.status === 204 ? null : r.json();
+  // Prefer: return=minimal answers 201 with an EMPTY body – parsing that as JSON used to throw after the row was
+  // already written (purchase recorded, theme pack never unlocked).
+  const text = await r.text();
+  return text ? JSON.parse(text) : null;
 }
 
 let local = null;

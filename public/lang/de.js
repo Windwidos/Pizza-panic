@@ -417,6 +417,7 @@
     'result.youWin': 'Du gewinnst!',
     'result.otherWins': '{name} gewinnt!',
     'result.tutDone': 'Übungsrunde geschafft – jetzt bist du bereit für echte Gegner!',
+    'result.practice': 'Übungsrunde – zum Üben, ohne XP und Münzen. Die Belohnung gab es beim ersten Mal.',
     'result.wonText': 'Alle Pizzen fertig – du bist Pizzaiolo/Pizzaiola!',
     'result.lostText': 'Ab in die Küche, nächste Runde!',
     'result.xp.base': '20 fürs Mitspielen',

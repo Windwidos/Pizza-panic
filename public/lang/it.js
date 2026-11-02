@@ -417,6 +417,7 @@
     'result.youWin': 'Hai vinto!',
     'result.otherWins': '{name} vince!',
     'result.tutDone': 'Partita di prova superata – ora sei pronto per avversari veri!',
+    'result.practice': 'Partita di prova – solo per allenarti, senza XP né monete. La ricompensa l’hai ricevuta la prima volta.',
     'result.wonText': 'Tutte le pizze pronte – sei un vero Pizzaiolo!',
     'result.lostText': 'Tutti in cucina, alla prossima!',
     'result.xp.base': '20 per aver giocato',
