@@ -1069,13 +1069,15 @@
   }
 
   // Always-visible menu: every ingredient already lying on my tray is ticked off.
+  // Every pizza shows the best stack it could still become – a lone sauce ticks all four, the player decides
+  // which one to build (the strict one-stack-per-pizza assignment would grey out the others and mislead).
   function menuStripHTML(tray, R) {
-    const assign = E.assignRecipes(tray, R);
     return `<div class="menu-strip">${R.map(r => {
-      const si = assign.indexOf(r);
-      const have = si >= 0 ? E.layersOf(tray[si]).length : 0;
       const layers = E.RECIPES[r].layers;
-      const done = have === layers.length;
+      const done = tray.some(st => E.completeRecipe(st, [r]) === r);
+      const have = done ? layers.length : Math.max(0, ...tray
+        .filter(st => E.completeRecipe(st, R) < 0 && E.candidates(st, [r]).length)
+        .map(st => E.layersOf(st).length));
       return `<div class="order ${done ? 'done' : ''}">
         <div class="order-name">${done ? '✅' : `${have}/${layers.length}`} ${esc(recipeName(r))}</div>
         <div class="order-row">${layers.map((l, i) =>
