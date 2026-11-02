@@ -55,7 +55,8 @@ Smash Burger selbst bleibt unverändert und darf nicht angefasst werden.
 - [x] Datenbank: Gratis-Tarif erlaubt nur 2 Projekte → Nutzer-Entscheidung: Tabellen `pizza_profiles` / `pizza_purchases`
       im Supabase-Projekt „smash-burger“ (svadhluclwfakgfgpgtu, Frankfurt). Gleiche SUPABASE_URL + Secret-Key wie Smash Burger.
 - [x] Lokales Git-Repo mit Commits, Remote https://github.com/Windwidos/pizza-panic.git
-- [ ] GitHub-Repo anlegen (Nutzer) → push; Render-Blueprint aus render.yaml (Nutzer) + Env-Variablen
+- [x] GitHub `Windwidos/Pizza-panic`, Render-Blueprint → LIVE https://pizza-panic.onrender.com (02.11.2026 getestet:
+      Profil landet in pizza_profiles, Bot-Tisch startet; Testprofile wieder gelöscht). Jeder Push auf main deployt neu.
 - [ ] Play-Console-App, Store-Eintrag (`store/`) und Promo-Bilder neu
 
 ## Wichtige Hinweise aus Smash Burger (bitte übernehmen)
